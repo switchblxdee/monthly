@@ -1,0 +1,24 @@
+[
+  {
+    "id": "PROMISE-001",
+    "owner": "Команда А",
+    "description": "Пример обязательства",
+    "source": "Название встречи или ссылка на источник",
+    "initial_due": "2026-10-31",
+    "current_due": "2026-11-30",
+    "outcome": "postponed",
+    "in_work_start": true,
+    "in_work_current": true,
+    "comment": "Пример комментария к переносу"
+  },
+  {
+    "id": "PROMISE-002",
+    "owner": "Команда А",
+    "description": "Второе обязательство",
+    "source": "Название встречи",
+    "initial_due": "2026-10-15",
+    "outcome": "completed_on_time",
+    "in_work_start": true,
+    "in_work_current": false
+  }
+]

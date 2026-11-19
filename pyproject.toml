@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "golos-it-mas"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["openpyxl>=3.1,<4", "langgraph>=1,<2", "langchain-gigachat>=0.5,<0.6"]
+[project.scripts]
+golos-it = "golos_mas.cli:main"
+golos-it-create-demo = "golos_mas.demo:main"
+golos-it-inspect-workbook = "golos_mas.inspect_workbook:main"
+golos-it-check-gigachat = "golos_mas.diagnostics:main"
+golos-it-verify = "golos_mas.verify:main"
+golos-it-extract-icons = "golos_mas.icons:main"
+[tool.pytest.ini_options]
+testpaths = ["tests"]

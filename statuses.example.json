@@ -1,0 +1,13 @@
+[
+  {
+    "product": "Пример продукта",
+    "topic": "Пример темы в точной формулировке из приоритетов",
+    "recurrence": "new",
+    "controls": ["aibolit", "backlog"],
+    "mitigation": "release",
+    "version": "7.0",
+    "deadline": "4Q 2026",
+    "promnenie": true,
+    "after_close": false
+  }
+]

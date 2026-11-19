@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "sheets": {
+    "Пример приоритетов": {
+      "header_row": 2,
+      "columns": {
+        "owner": "A",
+        "product": "B",
+        "topic": "C",
+        "mau": "D",
+        "count": "E",
+        "signals_score": "F",
+        "duration": "G",
+        "impact": "H",
+        "score": "I"
+      }
+    },
+    "Пример детализации": {
+      "header_row": 3,
+      "columns": {
+        "date": "A",
+        "source": "B",
+        "product": "C",
+        "topic": "D",
+        "text": "E",
+        "likes": "F",
+        "signal": "G"
+      }
+    }
+  }
+}
