@@ -503,6 +503,19 @@ class QuoteLimitAgent:
             if omitted:
                 topic['quotes']=quotes[:limit]
                 warnings.append(f"{topic['sheet']}!{topic['row']}: из {len(quotes)} выбранных обращений на слайдах оставлено {limit} по заданному ограничению")
+            chosen = topic.get('quotes', [])
+            displayed = chosen[:2] if topic.get('zone') == 'высокое внимание' else []
+            topic['presentation_quotes'] = []
+            for quote in displayed:
+                value = str(quote.get('text') or '').strip()
+                if len(value) > 180:
+                    value = value[:179].rsplit(' ', 1)[0] or value[:179]
+                    value = value.rstrip() + '…'
+                topic['presentation_quotes'].append({**quote, 'text': value})
+            topic['presentation_omitted_quote_references'] = [
+                {'sheet': q['sheet'], 'row': q['row']} for q in chosen[len(displayed):]]
+            if topic['presentation_omitted_quote_references'] and topic.get('zone') == 'высокое внимание':
+                warnings.append(f"{topic['sheet']}!{topic['row']}: на слайде показаны не все выбранные обращения; полные цитаты доступны в аудите")
             topics.append(topic)
         return {'topics':topics,'warnings':warnings}
 
@@ -513,7 +526,7 @@ class CoverageAgent:
         records={(r['sheet'],r['row']):r for r in state['signals']}
         matched={(r['sheet'],r['row']) for t in state['topics'] for r in t['matches']}
         quoted={(r['sheet'],r['row']) for t in state['topics'] for r in t.get('quotes',[])}
-        presented={(r['sheet'],r['row']) for t in state['topics'] if t.get('zone') in ('высокое внимание','UX') for r in t.get('quotes',[])}
+        presented={(r['sheet'],r['row']) for t in state['topics'] if t.get('zone') == 'высокое внимание' for r in t.get('presentation_quotes',t.get('quotes',[]))}
         unmatched=sorted(set(records)-matched);by_sheet=defaultdict(int)
         for sheet,_ in unmatched: by_sheet[sheet]+=1
         valid=[];sources=set();duplicate_keys=defaultdict(list)
@@ -556,8 +569,8 @@ class NarrativeAgent:
         empty={'narrative':'','narrative_sources':[],'warnings':state['warnings']}
         if self.llm is None: return empty
         candidates=[t for t in state['topics'] if t.get('zone')=='высокое внимание']
-        candidates.sort(key=lambda t:(-t['score'],-t['count'] if valid_signal(t.get('count')) else 1))
-        candidates=candidates[:40]
+        candidates.sort(key=lambda t:(-int(t['count']) if valid_signal(t.get('count')) else 1,-t['score']))
+        candidates=candidates[:3]
         if not candidates: return empty
         from langchain_core.messages import HumanMessage, SystemMessage
         def key(t): return (norm(t.get('owner')),norm(t.get('product')),norm(t.get('topic')))

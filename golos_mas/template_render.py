@@ -73,11 +73,13 @@ def summary(root,state):
     counts={z:sum(t['zone']==z for t in topics) for z in ('высокое внимание','потенциальный риск','наблюдение','UX')}
     group=root.find('.//p:grpSp',N)
     coverage=state.get('coverage',{})
-    text=f"Период: {state['period']}. Тем в приоритетах: {len(topics)}. Продуктов: {len({product_key(t['product']) for t in topics})}. Высокое внимание: {counts['высокое внимание']}; потенциальный риск: {counts['потенциальный риск']}; наблюдение: {counts['наблюдение']}; UX: {counts['UX']}."
+    priority_sheet=str(state.get('current_sheet') or 'приоритеты')
+    text=f"Период: {state['period']}. Тем в листе «{priority_sheet}»: {len(topics)}. Продуктов: {len({product_key(t['product']) for t in topics})}. Высокое внимание: {counts['высокое внимание']}; потенциальный риск: {counts['потенциальный риск']}; наблюдение: {counts['наблюдение']}; UX: {counts['UX']}."
     if coverage.get('detail_rows'):
         amount=coverage.get('signal_sum')
         qualifier=' (неполная)' if coverage.get('invalid_signal_rows') and amount is not None else ''
-        text+=f" По прочитанной детализации: строк: {coverage['detail_rows']}; сумма сигналов{qualifier}: {amount if amount is not None else 'нет данных'} (строк с числом: {coverage['numeric_signal_rows']}); указано источников: {coverage['distinct_named_sources']}."
+        sheets=', '.join(state.get('detail_sheets') or []) or 'не указаны'
+        text+=f" Детализация ({sheets}): строк: {coverage['detail_rows']}; сумма сигналов{qualifier}: {amount if amount is not None else 'нет данных'} (строк с числом: {coverage['numeric_signal_rows']}); указано источников: {coverage['distinct_named_sources']}."
         if coverage.get('possible_duplicate_groups'): text+=' Есть возможные повторы.'
     for sp in group.findall('.//p:sp',N):
         if content(sp): replace_text(sp,text)
@@ -92,7 +94,7 @@ def summary(root,state):
     table=root.find('.//a:tbl',N)
     rows=table.findall('a:tr',N)
     high=[t for t in topics if t['zone']=='высокое внимание']
-    high.sort(key=lambda t: (-t['score'], -t['count'] if valid_signal(t.get('count')) else 1))
+    high.sort(key=lambda t: (-int(t['count']) if valid_signal(t.get('count')) else 1, -t['score']))
     for index,row in enumerate(rows[1:]):
         cells=row.findall('a:tc',N)
         if index < len(high):
@@ -112,13 +114,16 @@ def replace_lines(element,header,products):
     body=element.find('p:txBody',N)
     if body is None: return
     p=body.find('a:p',N);first=p.find('a:r',N)
-    for rp in body.findall('.//a:rPr',N): rp.set('sz','1200')
+    line_count=1+sum(max(1,len(textwrap.wrap(name,width=34,break_long_words=True,break_on_hyphens=False))) for name,_ in products)
+    font_size=str(max(800,min(1100,int(1100*14/max(14,line_count)))))
+    for rp in body.findall('.//a:rPr',N): rp.set('sz',font_size)
     end=p.find('a:endParaRPr',N)
     def add_child(element):
         if end is None: p.append(element)
         else: p.insert(list(p).index(end),element)
-    for product,zone in products:
+    for index,(product,zone) in enumerate(products):
         add_child(ET.Element(f'{{{A}}}br'))
+        if index==0: add_child(ET.Element(f'{{{A}}}br'))
         marker=copy.deepcopy(first); marker.find('a:t',N).text='◉ ' if zone else '• '
         rp=marker.find('a:rPr',N)
         if rp is not None and zone:
@@ -201,6 +206,20 @@ def overview_rows(items):
             rows.append(row)
     return rows
 
+def overview_row_height(item):
+    lines=max(1,len(textwrap.wrap(str(item.get('topic') or ''),width=65,break_long_words=True)))
+    return min(1300000, max(530000, 350000 + lines*180000))
+
+def overview_pages(rows):
+    pages=[]; current=[]; used=0
+    for row in rows:
+        height=overview_row_height(row)
+        if current and (len(current)>=4 or used+height>3895000):
+            pages.append(current);current=[];used=0
+        current.append(row);used+=height
+    if current: pages.append(current)
+    return pages
+
 def contents_cards(groups):
     # Available space varies between blocks in the supplied table of contents.
     capacities=(6,6,4,2,2,6)
@@ -214,26 +233,8 @@ def contents_cards(groups):
             if key not in byproduct: byproduct[key]=(name,zone)
             elif rank.get(zone,0)>rank.get(byproduct[key][1],0): byproduct[key]=(byproduct[key][0],zone)
         queue.append([owner,list(byproduct.values())])
-    pages=[]
-    while queue:
-        cards=[]
-        for cap in capacities:
-            if not queue: break
-            owner,products=queue[0]
-            first_lines=max(1,len(textwrap.wrap(products[0][0],width=34,break_long_words=True,break_on_hyphens=False)))
-            # Start a fresh page with a larger card instead of putting a
-            # multi-line product into one of the short cards at the bottom.
-            if first_lines>cap and cards: break
-            count=0;used=0
-            for name,_ in products:
-                lines=max(1,len(textwrap.wrap(name,width=34,break_long_words=True,break_on_hyphens=False)))
-                if count and used+lines>cap: break
-                count+=1;used+=lines
-                if used>=cap: break
-            cards.append((owner,products[:count]));del products[:count]
-            if not products: queue.pop(0)
-        pages.append(cards)
-    return pages
+    return [[(owner, products) for owner,products in queue[i:i+len(capacities)]]
+            for i in range(0,len(queue),len(capacities))]
 
 def set_two_paragraphs(shape,label,value):
     body=shape.find('p:txBody',N);paras=body.findall('a:p',N)
@@ -364,7 +365,7 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         cols[1].set('w',str(int(cols[1].get('w'))+int(cols[2].get('w'))));grid.remove(cols[2])
         header_cells=rows[0].findall('a:tc',N);rows[0].remove(header_cells[2])
     for row in rows[1:]: table.remove(row)
-    height=min(1000000,3895000//len(items))
+    heights=[overview_row_height(item) for item in items]
     spans={};start=0
     while start<len(items):
         end=start+1;key=items[start].get('_product_key',product_key(items[start]['product']))
@@ -372,6 +373,7 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         spans[start]=end-start
         start=end
     for row_number,t in enumerate(items):
+        height=heights[row_number]
         row=copy.deepcopy(prototype);row.set('h',str(height));cells=row.findall('a:tc',N)
         for c in cells: c.attrib.pop('rowSpan',None);c.attrib.pop('vMerge',None)
         status=t.get('status_record',{})
@@ -406,7 +408,7 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
             if scale!=1:
                 ext.set('cx',str(int(int(ext.get('cx'))*scale)));ext.set('cy',str(int(int(ext.get('cy'))*scale)))
             off.set('x',str(int(x_center-int(ext.get('cx'))/2)))
-            off.set('y',str(809181+430379+row_number*height+(height-int(ext.get('cy')))//2))
+            off.set('y',str(809181+430379+sum(heights[:row_number])+(height-int(ext.get('cy')))//2))
             tree.append(pic)
         repeat_start=485888+1246136+5661020+1068117
         put_icon(icon,repeat_start+1246136/2)
@@ -421,7 +423,9 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
 
 def high_detail_slide(root,t,quotes,legend):
     tree=shapes(root)
-    source_names=list(dict.fromkeys(str(q.get('source') or 'Источник не указан') for q in quotes))
+    source_names=list(t.get('sources', [])) or ['Источник не указан']
+    midpoint=(len(source_names)+1)//2
+    source_columns=[', '.join(source_names[:midpoint]), ', '.join(source_names[midpoint:])]
     for child in list(tree):
         x,y=position(child)
         if child.tag==f'{{{P}}}pic' and x is not None and y < 6*914400:
@@ -451,9 +455,10 @@ def high_detail_slide(root,t,quotes,legend):
         elif txt=='1': pass
         elif txt.startswith('Карточка ОС') or txt.startswith('чат «Почта для SberOS'):
             source_index=0 if txt.startswith('Карточка ОС') else 1
-            if source_index>=len(source_names): tree.remove(child)
+            if not source_columns[source_index]: tree.remove(child)
             else:
-                replace_text(child,source_names[source_index])
+                replace_text(child,source_columns[source_index])
+                for rp in child.findall('.//a:rPr',N): rp.set('sz','800')
                 transform=child.find('.//a:xfrm',N)
                 if transform is not None:
                     transform.find('a:off',N).set('x',str(round((.8 if source_index==0 else 5.1)*914400)))
@@ -487,12 +492,13 @@ def high_detail_slide(root,t,quotes,legend):
     for i,name in enumerate(controls_icons): icon(name,base+col+col*(i+1)/(len(controls_icons)+1),row_y,.65 if len(controls_icons)>3 else 1)
     if status.get('mitigation'): icon(status['mitigation'],base+2*col+140000,row_y)
     if status.get('promnenie'): icon('promnenie',348231+569958/2,1100369+523748+180000)
-    body=cells[1].find('a:txBody',N);replace_text(cells[1],t['topic'])
+    body=cells[1].find('a:txBody',N);replace_text(cells[1],t['topic']+' ['+str(t['sheet'])+'!'+str(t['row'])+']')
     for quote in quotes:
         if not quote.get('text'): continue
         paragraph=copy.deepcopy(body.find('a:p',N))
         holder=ET.Element(f'{{{A}}}tc');tmp=ET.SubElement(holder,f'{{{A}}}txBody');tmp.append(paragraph)
-        replace_text(holder,'«'+quote['text']+'»')
+        source=str(quote.get('source') or 'Источник не указан')
+        replace_text(holder,'«'+quote['text']+'» ['+source+'; '+str(quote['sheet'])+'!'+str(quote['row'])+']')
         for rp in paragraph.findall('.//a:rPr',N): rp.set('b','0');rp.set('sz','1100')
         body.append(paragraph)
     return root
@@ -571,39 +577,18 @@ def make_deck(template, output, state):
             selected=order_topics_by_product([t for t in items if (t['zone']=='UX')==is_ux])
             if not selected: continue
             rows=overview_rows(selected)
-            pages=[rows[i:i+4] for i in range(0,len(rows),4)]
+            pages=overview_pages(rows)
             for idx,part in enumerate(pages,1):
                 plans.append((6,lambda r,owner=owner,part=part,idx=idx,total=len(pages),is_ux=is_ux:table_slide(r,owner,part,idx,total,is_ux)))
             for t in selected:
-                if t['zone'] not in ('высокое внимание','UX'): continue
-                topic_parts=split_text(t['topic'],250)
-                for part_number,topic_part in enumerate(topic_parts[:-1],1):
-                    fragment=dict(t,topic=f'Тема ({part_number}/{len(topic_parts)}): '+topic_part)
-                    blank={'text':'','source':'Цитата на следующем слайде' if t.get('quotes') else 'Комментарий не найден','sheet':t['sheet'],'row':t['row']}
-                    if is_ux: plans.append((47,lambda r,t=fragment,q=blank:detail_slide(r,t,q,0)))
-                    else: plans.append((12,lambda r,t=fragment,q=blank:high_detail_slide(r,t,[q],legend)))
-                fragment=dict(t,topic=(f'Тема ({len(topic_parts)}/{len(topic_parts)}): ' if len(topic_parts)>1 else '')+topic_parts[-1])
-                quotes=t['quotes'] or [{'text':'','source':None,'sheet':t['sheet'],'row':t['row']}]
-                if is_ux:
-                    for q in quotes:
-                        parts=split_text(q['text'],250)
-                        for i,part in enumerate(parts):
-                            segment=dict(q,text=part+(' …' if i<len(parts)-1 else ''))
-                            plans.append((47,lambda r,t=fragment,q=segment:detail_slide(r,t,q,0)))
-                else:
-                    segments=[]
-                    for q in quotes:
-                        parts=split_text(q['text'],250)
-                        for i,part in enumerate(parts):
-                            segments.append(dict(q,text=part+(' …' if i<len(parts)-1 else '')))
-                    batches=[];batch=[];length=0
-                    for segment in segments:
-                        size=len(segment['text'])
-                        if batch and (len(batch)>=2 or length+size>300): batches.append(batch);batch=[];length=0
-                        batch.append(segment);length+=size
-                    if batch: batches.append(batch)
-                    for batch in batches:
-                        plans.append((12,lambda r,t=fragment,quotes=batch:high_detail_slide(r,t,quotes,legend)))
+                if t['zone'] != 'высокое внимание': continue
+                # One topic per detail slide; full source rows and texts stay in audit.
+                title=str(t['topic'])
+                if len(title)>250: title=title[:249].rsplit(' ',1)[0].rstrip()+'…'
+                fragment=dict(t,topic=title)
+                quotes=t.get('presentation_quotes', t.get('quotes',[])[:2])
+                if not quotes: quotes=[{'text':'','source':None,'sheet':t['sheet'],'row':t['row']}]
+                plans.append((12,lambda r,t=fragment,quotes=quotes:high_detail_slide(r,t,quotes,legend)))
         spans[owner]=(group_start,len(plans))
     if report:
         for number in (54,55,56):

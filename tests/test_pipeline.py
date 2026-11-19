@@ -302,15 +302,15 @@ def test_contents_reserves_room_for_wrapped_product_names():
     cards=contents_cards({'A':[{'product':p,'zone':'высокое внимание'} for p in products]})
     flattened=[product for page in cards for _,items in page for product,_ in items]
     assert flattened==products
-    assert len(cards[0][0][1])<len(products)
+    assert len(cards[0][0][1])==len(products)
 
 def test_contents_moves_long_product_from_short_card_to_next_page():
     from golos_mas.template_render import contents_cards
     products=[f'Продукт {i}: система доступа и управления инфраструктурой организации' for i in range(8)]
     pages=contents_cards({'A':[{'product':p,'zone':'высокое внимание'} for p in products]})
     flattened=[product for page in pages for _,items in page for product,_ in items]
-    assert flattened==products and len(pages)>1
-    assert len(pages[0])==3
+    assert flattened==products and len(pages)==1 and len(pages[0])==1
+    assert len(pages[0][0][1])==8
 
 def test_failed_validation_does_not_replace_existing_deck(tmp_path,monkeypatch):
     import pytest
@@ -451,8 +451,10 @@ def test_fallback_renders_the_end_of_long_topic_and_quote(tmp_path):
     state=create_graph().invoke({'workbook':str(book),'current_sheet':'P','period':'месяц','output':str(out)})
     with ZipFile(out) as deck:
         data=b''.join(deck.read(n) for n in deck.namelist() if n.startswith('ppt/slides/slide') and n.endswith('.xml'))
-        assert 'КОНЕЦТЕМЫ'.encode() in data and 'КОНЕЦЦИТАТЫ'.encode() in data
-    assert state['slide_count']>5
+        assert 'КОНЕЦТЕМЫ'.encode() in data
+        assert state['topics'][0]['quotes'][0]['text']==quote
+        assert 'КОНЕЦЦИТАТЫ'.encode() not in data
+    assert state['slide_count']==5
 
 
 def test_status_metadata_requires_template_and_keeps_existing_output(tmp_path):

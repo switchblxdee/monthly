@@ -61,9 +61,10 @@ def main():
     for topic in result['topics']:
         entry={k:v for k,v in topic.items() if k not in ('matches','quote_candidates')}
         entry['matched_references']=[{'sheet':r['sheet'],'row':r['row']} for r in topic.get('matches',[])]
+        entry['source_references']=[{'sheet':r['sheet'],'row':r['row'],'source':r.get('source')} for r in topic.get('matches',[])]
         audit_topics.append(entry)
     digest=file_sha256(result['output'])
-    payload={'presentation_sha256':digest,'warnings':result['warnings'],'agent_decisions':result.get('agent_decisions',[]),'topics':audit_topics,'slide_count':result['slide_count'],'promise_report':result.get('promise_report'),'coverage':result.get('coverage'),'date_filter':result.get('date_filter'),'skipped_rows':result.get('skipped_rows',[]),'narrative':result.get('narrative',''),'narrative_sources':result.get('narrative_sources',[]),'source_sheets':{'current':result.get('current_sheet'),'previous':result.get('previous_sheet'),'detail':result.get('detail_sheets'),'schema':args.schema_json}}
+    payload={'presentation_sha256':digest,'warnings':result['warnings'],'agent_decisions':result.get('agent_decisions',[]),'source_inventory':result.get('source_inventory'),'topics':audit_topics,'slide_count':result['slide_count'],'promise_report':result.get('promise_report'),'coverage':result.get('coverage'),'date_filter':result.get('date_filter'),'skipped_rows':result.get('skipped_rows',[]),'narrative':result.get('narrative',''),'narrative_sources':result.get('narrative_sources',[]),'source_sheets':{'current':result.get('current_sheet'),'previous':result.get('previous_sheet'),'detail':result.get('detail_sheets'),'schema':args.schema_json}}
     temporary=None
     try:
         with tempfile.NamedTemporaryFile(mode='w',encoding='utf8',prefix='.golos-audit-',suffix='.json',dir=report.resolve().parent,delete=False) as handle:

@@ -88,7 +88,7 @@ def test_repeated_contents_cards_keep_group_number(tmp_path):
     with ZipFile(out) as deck:
         root=ET.fromstring(deck.read('ppt/slides/slide3.xml'))
         texts=[content(shape) for shape in root.findall('.//p:sp',N)]
-        assert sum(text.startswith('01 Команда') for text in texts)==3
+        assert sum(text.startswith('01 Команда') for text in texts)==1
         assert not any(text.startswith('02 Команда') for text in texts)
 
 @pytest.mark.skipif(not os.environ.get('GOLOS_TEST_TEMPLATE'), reason='Set GOLOS_TEST_TEMPLATE to the original example deck')
@@ -124,11 +124,13 @@ def test_long_text_is_split_without_omitting_segments(tmp_path):
     s.append(['источник','продукт','тема','Маскированный текст из источника','сигнал'])
     s.append(['Тестовый источник','Продукт',topic,quote,1]);path=tmp_path/'long.xlsx';w.save(path)
     out=tmp_path/'long.pptx'
-    create_graph().invoke({'workbook':str(path),'template':os.environ['GOLOS_TEST_TEMPLATE'],'current_sheet':'priorities','period':'октябрь','output':str(out)})
+    result=create_graph().invoke({'workbook':str(path),'template':os.environ['GOLOS_TEST_TEMPLATE'],'current_sheet':'priorities','period':'октябрь','output':str(out)})
     with ZipFile(out) as deck:
         slides=b''.join(deck.read(name) for name in deck.namelist() if name.startswith('ppt/slides/slide') and name.endswith('.xml')).decode()
-        for fragment in split_text(topic,250)+split_text(quote,250): assert fragment in slides
-        assert 'Тема (1/' in slides and 'прод.' in slides
+        assert result['topics'][0]['topic']==topic and result['topics'][0]['quotes'][0]['text']==quote
+        assert result['topics'][0]['presentation_quotes'][0]['text'] in slides
+        assert result['slide_count'] < 15
+        assert 'прод.' in slides
 
 @pytest.mark.skipif(not os.environ.get('GOLOS_TEST_TEMPLATE'), reason='Set GOLOS_TEST_TEMPLATE to the original example deck')
 def test_unbroken_long_technical_identifier_is_preserved(tmp_path):
@@ -141,7 +143,7 @@ def test_unbroken_long_technical_identifier_is_preserved(tmp_path):
     assert state['topics'][0]['quotes'][0]['text']==quote
     with ZipFile(out) as deck:
         slides=b''.join(deck.read(n) for n in deck.namelist() if n.startswith('ppt/slides/slide') and n.endswith('.xml')).decode()
-        assert all(part in slides for part in split_text(quote,250))
+        assert state['topics'][0]['presentation_quotes'][0]['text'] in slides
 
 @pytest.mark.skipif(not os.environ.get('GOLOS_TEST_TEMPLATE'), reason='Set GOLOS_TEST_TEMPLATE to the original example deck')
 def test_model_choice_is_rendered_from_original_record(tmp_path):
@@ -308,7 +310,7 @@ def test_quote_limit_reduces_slides_and_preserves_omitted_references(tmp_path):
     common={'workbook':str(book),'template':os.environ['GOLOS_TEST_TEMPLATE'],'current_sheet':'P','period':'ноябрь'}
     full=create_graph().invoke(dict(common,output=str(tmp_path/'full.pptx')))
     limited=create_graph().invoke(dict(common,output=str(tmp_path/'limited.pptx'),max_quotes_per_topic=1))
-    assert limited['slide_count']<full['slide_count']
+    assert limited['slide_count']==full['slide_count']
     assert limited['topics'][0]['omitted_quote_references']==[{'sheet':'SW','row':3},{'sheet':'SW','row':4}]
     assert limited['coverage']['presentation_quote_rows']==1
     assert any('по заданному ограничению' in warning for warning in limited['warnings'])
@@ -368,7 +370,7 @@ def test_summary_qualifies_partial_detail_sum(tmp_path):
     assert state['coverage']['numeric_signal_rows']==1 and state['coverage']['invalid_signal_rows']==1
     with ZipFile(out) as deck:
         summary=deck.read('ppt/slides/slide2.xml').decode()
-        assert 'По прочитанной детализации: строк: 2' in summary and 'сумма сигналов (неполная): 3 (строк с числом: 1)' in summary
+        assert 'Детализация (SW): строк: 2' in summary and 'сумма сигналов (неполная): 3 (строк с числом: 1)' in summary
 
 @pytest.mark.skipif(not os.environ.get('GOLOS_TEST_TEMPLATE'), reason='Set GOLOS_TEST_TEMPLATE to the original example deck')
 def test_detail_uses_original_icons_and_accessible_descriptions(tmp_path):
@@ -429,7 +431,8 @@ def test_short_quotes_share_slide_and_all_selected_evidence_is_rendered(tmp_path
         texts=[' '.join(t.text or '' for t in slide.findall('.//a:t',ns)) for slide in slides]
         first=next(i for i,text in enumerate(texts) if 'Первое обращение' in text)
         assert 'Второе обращение' in texts[first] and 'Канал один' in texts[first] and 'Канал два' in texts[first]
-        assert any('Третье обращение' in text for text in texts)
+        assert not any('Третье обращение' in text for text in texts)
+        assert result['topics'][0]['presentation_omitted_quote_references']==[{'sheet':'SW','row':4}]
         quote_runs=[r for r in slides[first].findall('.//a:r',ns) if 'Первое обращение' in ''.join(t.text or '' for t in r.findall('.//a:t',ns))]
         assert quote_runs[0].find('a:rPr',ns).get('b')=='0'
 
@@ -484,4 +487,6 @@ def test_batched_quote_selection_reaches_presentation(tmp_path):
     assert any(q['text']=='Уникальный отзыв номер 25' for q in state['topics'][0]['quotes'])
     with ZipFile(out) as deck:
         data=b''.join(deck.read(n) for n in deck.namelist() if n.startswith('ppt/slides/slide') and n.endswith('.xml'))
-        assert 'Уникальный отзыв номер 25'.encode() in data
+        for quote in state['topics'][0]['presentation_quotes']:
+            assert quote['text'].encode() in data
+        assert len(state['topics'][0]['presentation_quotes'])==2

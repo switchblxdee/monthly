@@ -54,17 +54,16 @@ def build_pages(state):
         parts=list(chunks(wrap_paragraphs(lines),20))
         for idx,part in enumerate(parts,1): pages.append(page('Темы, требующие внимания',part,f'{owner} · {idx}/{len(parts)}'))
         for t in items:
-            if t['zone'] not in ('высокое внимание','UX'): continue
+            if t['zone'] != 'высокое внимание': continue
             topic=str(t['topic']);short=topic if len(topic)<=200 else topic[:199]+'…'
-            quotes=t['quotes'] or [{'text':'','source':None,'sheet':t['sheet'],'row':t['row']}]
+            quotes=t.get('presentation_quotes', t.get('quotes',[])[:2]) or [{'text':'','source':None,'sheet':t['sheet'],'row':t['row']}]
+            lines=[f'Тема: {short}',f"Приоритет: {t['zone']}; сигналов: {display_signal_count(t.get('count'))}",'']
             for q in quotes:
-                pieces=split_preserving_text(q['text'],700)
-                for index,piece in enumerate(pieces,1):
-                    lines=[f'Тема: {short}',f"Приоритет: {t['zone']}; сигналов: {display_signal_count(t.get('count'))}",'']
-                    lines.append(f'«{piece}»' if piece else 'Подходящее обращение не найдено')
-                    if q['text']: lines.append(f"Источник: {q.get('source') or 'не указан'} ({q['sheet']}!{q['row']})")
-                    suffix=f' · фрагмент {index}/{len(pieces)}' if len(pieces)>1 else ''
-                    for part in chunks(wrap_paragraphs(lines),20): pages.append(page(str(t['product']),part,owner+suffix))
+                lines.append(f"«{q['text']}»" if q['text'] else 'Подходящее обращение не найдено')
+                if q['text']: lines.append(f"Источник: {q.get('source') or 'не указан'} ({q['sheet']}!{q['row']})")
+            sources=', '.join(t.get('sources', [])) or 'не указаны'
+            lines.append(f'Источники по теме: {sources}')
+            pages.append(page(str(t['product']),wrap_paragraphs(lines),owner))
     return pages
 
 class PresentationAgent:

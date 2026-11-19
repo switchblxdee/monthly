@@ -14,6 +14,7 @@ from .semantic_matching import SemanticMatchingAgent
 from .methodology import PrioritizationAgent
 from .review_agents import ToolReviewAgent
 from .worker_agents import ReportWorker
+from .source_inventory import SourceInventory
 
 class ReportState(TypedDict, total=False):
     schema_json: str | None
@@ -45,6 +46,7 @@ class ReportState(TypedDict, total=False):
     narrative: str
     narrative_sources: list[dict[str, Any]]
     slide_count: int
+    source_inventory: dict[str, Any]
     agent_decisions: list[dict[str, Any]]
     matching_review_attempts: int
     matching_review_action: str
@@ -98,10 +100,10 @@ def create_graph(llm=None, use_model_quotes=False, use_model_matching=False, max
             raise ValueError('Для агентного режима модель должна поддерживать bind_tools')
         return create_agent_team(llm, use_model_quotes, use_model_matching, max_quote_candidates)
     graph=StateGraph(ReportState)
-    for name,agent in [('excel',ExcelAgent()),('prioritization',PrioritizationAgent()),('topic_mapping',TopicMappingAgent()),('semantic_matching',SemanticMatchingAgent(llm,use_model_matching)),('analytics',AnalyticsAgent()),('matching_review',ToolReviewAgent(llm,'matching',retry_allowed=use_model_matching)),('statuses',StatusAgent()),('promises',PromisesAgent()),('evidence',EvidenceAgent()),('quote_selection',QuoteSelectionStage(llm,use_model_quotes,max_quote_candidates)),('evidence_review',ToolReviewAgent(llm,'evidence',allow_text=use_model_quotes,retry_allowed=use_model_quotes)),('quote_limit',QuoteLimitAgent()),('coverage',CoverageAgent()),('narrative',NarrativeAgent(llm)),('presentation',SelectPresentationAgent()),('quality',QualityAgent()),('publish',PublishAgent())]:
+    for name,agent in [('excel',ExcelAgent()),('source_inventory',SourceInventory()),('prioritization',PrioritizationAgent()),('topic_mapping',TopicMappingAgent()),('semantic_matching',SemanticMatchingAgent(llm,use_model_matching)),('analytics',AnalyticsAgent()),('matching_review',ToolReviewAgent(llm,'matching',retry_allowed=use_model_matching)),('statuses',StatusAgent()),('promises',PromisesAgent()),('evidence',EvidenceAgent()),('quote_selection',QuoteSelectionStage(llm,use_model_quotes,max_quote_candidates)),('evidence_review',ToolReviewAgent(llm,'evidence',allow_text=use_model_quotes,retry_allowed=use_model_quotes)),('quote_limit',QuoteLimitAgent()),('coverage',CoverageAgent()),('narrative',NarrativeAgent(llm)),('presentation',SelectPresentationAgent()),('quality',QualityAgent()),('publish',PublishAgent())]:
         graph.add_node(name,agent)
     graph.add_edge(START,'excel')
-    for left,right in [('excel','prioritization'),('prioritization','topic_mapping'),('topic_mapping','semantic_matching'),('semantic_matching','analytics'),('analytics','matching_review'),('statuses','promises'),('promises','evidence'),('evidence','quote_selection'),('quote_selection','evidence_review'),('quote_limit','coverage'),('coverage','narrative'),('narrative','presentation'),('presentation','quality'),('quality','publish'),('publish',END)]:
+    for left,right in [('excel','source_inventory'),('source_inventory','prioritization'),('prioritization','topic_mapping'),('topic_mapping','semantic_matching'),('semantic_matching','analytics'),('analytics','matching_review'),('statuses','promises'),('promises','evidence'),('evidence','quote_selection'),('quote_selection','evidence_review'),('quote_limit','coverage'),('coverage','narrative'),('narrative','presentation'),('presentation','quality'),('quality','publish'),('publish',END)]:
         graph.add_edge(left,right)
     graph.add_conditional_edges('matching_review',lambda state: state.get('matching_review_action','accept'),{'retry':'semantic_matching','accept':'statuses'})
     graph.add_conditional_edges('evidence_review',lambda state: state.get('evidence_review_action','accept'),{'retry':'quote_selection','accept':'quote_limit'})
@@ -129,6 +131,7 @@ def create_agent_team(llm, use_model_quotes=False, use_model_matching=False, max
     workers = [
         ReportWorker(llm, 'data', 'прочитай книгу и подготовь данные и методику', [
             ('read_workbook', 'Прочитать листы Excel и проверить структуру.', ExcelAgent()),
+            ('inventory_sources', 'Сохранить полный перечень листов, число строк и источников для следующих агентов.', SourceInventory()),
             ('apply_prioritization', 'Применить методику приоритета к темам.', PrioritizationAgent()),
             ('prepare_mapping', 'Подготовить заданные сопоставления тем.', TopicMappingAgent())]),
         ReportWorker(llm, 'analyst', 'сопоставь темы с сигналами и рассчитай показатели', [
