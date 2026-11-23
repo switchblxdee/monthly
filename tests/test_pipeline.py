@@ -294,7 +294,7 @@ def test_contents_product_uses_highest_explicit_zone():
     from golos_mas.template_render import contents_cards
     groups={'A':[{'product':'One','zone':'потенциальный риск'}, {'product':' one ','zone':'высокое внимание'}, {'product':'Two','zone':'UX'}, {'product':'Three','zone':'наблюдение'}]}
     cards=contents_cards(groups)
-    assert cards==[[('A',[('One','высокое внимание'),('Two',None),('Three','наблюдение')])]]
+    assert cards==[[('A',[('One','высокое внимание'),('Three','наблюдение'),('Two',None)])]]
 
 def test_contents_reserves_room_for_wrapped_product_names():
     from golos_mas.template_render import contents_cards

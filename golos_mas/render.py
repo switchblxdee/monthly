@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import textwrap
 from .agents import display_signal_count
+from .detail_widgets import detail_pages
+from .template_render import product_key
 
 NS='xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"'
 
@@ -53,17 +55,20 @@ def build_pages(state):
             lines.extend([f"{t['product']}: {t['zone']}; {t['recurrence']}; сигналов: {display_signal_count(t.get('count'))}",str(t['topic']),''])
         parts=list(chunks(wrap_paragraphs(lines),20))
         for idx,part in enumerate(parts,1): pages.append(page('Темы, требующие внимания',part,f'{owner} · {idx}/{len(parts)}'))
-        for t in items:
-            if t['zone'] != 'высокое внимание': continue
-            topic=str(t['topic']);short=topic if len(topic)<=200 else topic[:199]+'…'
-            quotes=t.get('presentation_quotes', t.get('quotes',[])[:2]) or [{'text':'','source':None,'sheet':t['sheet'],'row':t['row']}]
-            lines=[f'Тема: {short}',f"Приоритет: {t['zone']}; сигналов: {display_signal_count(t.get('count'))}",'']
-            for q in quotes:
-                lines.append(f"«{q['text']}»" if q['text'] else 'Подходящее обращение не найдено')
-                if q['text']: lines.append(f"Источник: {q.get('source') or 'не указан'} ({q['sheet']}!{q['row']})")
-            sources=', '.join(t.get('sources', [])) or 'не указаны'
-            lines.append(f'Источники по теме: {sources}')
-            pages.append(page(str(t['product']),wrap_paragraphs(lines),owner))
+        products={}
+        for t in items: products.setdefault(product_key(t['product']),[]).append(t)
+        for product_topics in products.values():
+            detail=detail_pages([t for t in product_topics if t['zone']=='высокое внимание'])
+            sources=list(dict.fromkeys(str(s) for t in product_topics for s in t.get('sources',[]) if s))
+            for idx,part in enumerate(detail):
+                lines=[]
+                for t in part:
+                    topic=str(t['topic']);short=topic if len(topic)<=200 else topic[:199]+'…'
+                    lines.extend([f'Тема: {short}',f"Приоритет: {t['zone']}; сигналов: {display_signal_count(t.get('count'))}"])
+                    quotes=t.get('presentation_quotes', t.get('quotes',[])[:2])
+                    lines.extend('«'+q['text']+'»' for q in quotes if q.get('text'))
+                if idx==len(detail)-1: lines.append('Источники: '+(', '.join(sources) or 'не указаны'))
+                pages.append(page(str(part[0]['product']),wrap_paragraphs(lines),owner))
     return pages
 
 class PresentationAgent:

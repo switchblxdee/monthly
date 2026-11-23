@@ -347,7 +347,8 @@ def test_contents_uses_calculated_zone_color(tmp_path):
         texts=' '.join(el.text or '' for el in slide.findall('.//a:t',ns))
         colors=[el.get('val') for el in slide.findall('.//a:rPr/a:solidFill/a:srgbClr',ns)]
         assert 'Продуктов с темами высокого внимания: 1' in texts
-        assert 'F44552' in colors and 'UX / зона не указана' in texts
+        assert 'F44552' in colors and 'UX / зона не указана' not in texts
+        assert 'темы в зоне «высокое внимание»' in texts
 
 @pytest.mark.skipif(not os.environ.get('GOLOS_TEST_TEMPLATE'), reason='Set GOLOS_TEST_TEMPLATE to the original example deck')
 def test_contents_runs_precede_paragraph_end_properties(tmp_path):
@@ -458,14 +459,14 @@ def test_product_merge_restarts_at_new_slide(tmp_path):
     import xml.etree.ElementTree as ET
     ns={'a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
     w=Workbook();s=w.active;s.title='P';s.append(['владелец','продукт','тема','общий балл'])
-    for i in range(5): s.append(['Команда','Продукт',f'Тема {i}',5])
+    for i in range(8): s.append(['Команда','Продукт',f'Тема {i}',5])
     book=tmp_path/'i.xlsx';w.save(book);out=tmp_path/'o.pptx'
     create_graph().invoke({'workbook':str(book),'template':os.environ['GOLOS_TEST_TEMPLATE'],'current_sheet':'P','period':'месяц','output':str(out)})
     with ZipFile(out) as deck:
         first=ET.fromstring(deck.read('ppt/slides/slide6.xml'));second=ET.fromstring(deck.read('ppt/slides/slide7.xml'))
         c1=first.findall('.//a:tbl/a:tr',ns)[1].findall('a:tc',ns)[0]
         c2=second.findall('.//a:tbl/a:tr',ns)[1].findall('a:tc',ns)[0]
-        assert c1.get('rowSpan')=='4' and c2.get('vMerge') is None
+        assert c1.get('rowSpan')=='7' and c2.get('vMerge') is None
         assert ''.join(x.text or '' for x in c2.findall('.//a:t',ns))=='Продукт'
 
 @pytest.mark.skipif(not os.environ.get('GOLOS_TEST_TEMPLATE'), reason='Set GOLOS_TEST_TEMPLATE to the original example deck')

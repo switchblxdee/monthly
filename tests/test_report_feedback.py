@@ -40,9 +40,31 @@ def test_compact_details_preserve_sources_and_rank_high_topics_by_signals(tmp_pa
         assert 'Проблема 11' in summary and 'Проблема 10' in summary and 'Проблема 9' in summary
         slides=[text(i) for i in range(1,state['slide_count']+1)]
         details=[s for s in slides if 'Темы с высоким приоритетом' in s]
-        assert len(details)==12 and all('UX отзыв' not in s for s in details)
-        assert all('Канал 0' in s and 'Канал 1' in s and 'Канал 2' in s for s in details)
-        assert all('SW!' in s for s in details)
+        assert len(details)==6 and all('UX отзыв' not in s for s in details)
+        assert all('Источники:' not in s for s in details[:-1])
+        assert all(name in details[-1] for name in ('Канал 0','Канал 1','Канал 2','UX чат'))
+        assert all('SW!' not in s and 'приоритет октябрь!' not in s for s in details)
+        assert all('Дополнительно:' in s and 'CSAT' in s for s in details)
+        last_number=next(i for i in range(1,state['slide_count']+1) if text(i)==details[-1])
+        relationships=deck.read(f'ppt/slides/_rels/slide{last_number}.xml.rels').decode()
+        assert 'https://mapp.sberbank.ru/sberf1/page/40327' in relationships
+        last=ET.fromstring(deck.read(f'ppt/slides/slide{last_number}.xml'))
+        texts=[''.join(x.text or '' for x in shape.findall('.//a:t',NS)) for shape in last.findall('.//p:sp',{'a':NS['a'],'p':'http://schemas.openxmlformats.org/presentationml/2006/main'})]
+        assert all(texts.count(name)==1 for name in ('Канал 0','Канал 1','Канал 2','UX чат'))
+        table=last.find('.//a:tbl',NS)
+        assert len(table.findall('a:tr',NS))==3
+        for row in table.findall('a:tr',NS)[1:]:
+            quote=[run for run in row.findall('.//a:r',NS) if ''.join(x.text or '' for x in run.findall('.//a:t',NS)).startswith('«')]
+            assert quote and all(run.find('a:rPr',NS).get('sz')=='1100' and run.find('a:rPr',NS).get('b')=='0' for run in quote)
+            assert all(run.find('a:rPr/a:latin',NS).get('typeface')=='SB Sans Display Semibold' for run in quote)
+        pns={'a':NS['a'],'p':'http://schemas.openxmlformats.org/presentationml/2006/main'}
+        frame=last.find('.//p:graphicFrame/p:xfrm',pns)
+        frame_size=frame.find('a:ext',pns).attrib
+        backgrounds=[shape for shape in last.findall('.//p:sp',pns)
+                     if not ''.join(x.text or '' for x in shape.findall('.//a:t',pns))
+                     and (ext:=shape.find('p:spPr/a:xfrm/a:ext',pns)) is not None
+                     and ext.attrib==frame_size]
+        assert backgrounds
     assert len(state['topics'][0]['quotes'][0]['text']) > 1000
     assert len(state['topics'][0]['presentation_quotes'][0]['text']) <= 180
 

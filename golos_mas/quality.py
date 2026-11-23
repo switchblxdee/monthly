@@ -59,6 +59,15 @@ class QualityAgent:
         for entry in owners_by_product.values():
             if len(entry['owners'])>1:
                 warnings.append(f"{entry['ref']}: одно название продукта встречается у нескольких владельцев; в общем количестве названий продукт учтён один раз")
+        sources_by_product={}
+        for topic in state['topics']:
+            key=(product_key(topic.get('owner')),product_key(topic.get('product')))
+            entry=sources_by_product.setdefault(key,{'sources':set(),'high':False,'ref':f"{topic['sheet']}!{topic['row']}"})
+            entry['sources'].update(str(source).strip() for source in topic.get('sources',[]) if str(source).strip())
+            entry['high'] |= topic.get('zone')=='высокое внимание'
+        for entry in sources_by_product.values():
+            if entry['high'] and (len(entry['sources'])>6 or any(len(name)>50 for name in entry['sources'])):
+                warnings.append(f"{entry['ref']}: много источников продукта или длинные названия; проверьте читаемость виджетов")
         for t in state['topics']:
             if len(str(t.get('topic') or ''))>250:
                 warnings.append(f"{t['sheet']}!{t['row']}: длинная тема может не поместиться на слайде; проверьте визуально")

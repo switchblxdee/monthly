@@ -113,6 +113,11 @@ def replace_lines(element,header,products):
     replace_text(element,header)
     body=element.find('p:txBody',N)
     if body is None: return
+    bodypr=body.find('a:bodyPr',N)
+    if bodypr is not None:
+        for fit in list(bodypr):
+            if fit.tag in (f'{{{A}}}spAutoFit',f'{{{A}}}noAutofit',f'{{{A}}}normAutofit'): bodypr.remove(fit)
+        ET.SubElement(bodypr,f'{{{A}}}normAutofit')
     p=body.find('a:p',N);first=p.find('a:r',N)
     line_count=1+sum(max(1,len(textwrap.wrap(name,width=34,break_long_words=True,break_on_hyphens=False))) for name,_ in products)
     font_size=str(max(800,min(1100,int(1100*14/max(14,line_count)))))
@@ -142,8 +147,7 @@ def contents_slide(root,cards,spans,page,total,high_count):
         if text.startswith('По 14-ти'):
             replace_text(child, f'Продуктов с темами высокого внимания: {high_count}' + (f' ({page}/{total})' if total>1 else ''))
         elif text.startswith('темы в зоне'):
-            if 'наблюдение' in text: neutral_legend=child
-            replace_text(child,text.replace('темы в зоне','наивысшая зона:'))
+            pass
         elif text.startswith('07 Мониторинг'):
             tree.remove(child)
         elif re.match(r'^0[1-6] ',text):
@@ -161,12 +165,6 @@ def contents_slide(root,cards,spans,page,total,high_count):
             else:
                 start,end=spans[cards[index][0]]
                 replace_text(child,f'Слайды {start}–{end}')
-    if neutral_legend is not None:
-        note=copy.deepcopy(neutral_legend); cnv=note.find('.//p:cNvPr',N)
-        if cnv is not None: cnv.set('id',str(1+max((int(e.get('id','0')) for e in root.findall('.//p:cNvPr',N)),default=0)))
-        off=note.find('.//a:xfrm/a:off',N)
-        if off is not None: off.set('x',str(round(9.4*914400)))
-        replace_text(note,'• UX / зона не указана');tree.append(note)
     return root
 
 def split_text(value,limit):
@@ -214,7 +212,7 @@ def overview_pages(rows):
     pages=[]; current=[]; used=0
     for row in rows:
         height=overview_row_height(row)
-        if current and (len(current)>=4 or used+height>3895000):
+        if current and used+height>4059000:
             pages.append(current);current=[];used=0
         current.append(row);used+=height
     if current: pages.append(current)
@@ -232,9 +230,20 @@ def contents_cards(groups):
             zone=t.get('zone');zone=zone if zone in rank else None
             if key not in byproduct: byproduct[key]=(name,zone)
             elif rank.get(zone,0)>rank.get(byproduct[key][1],0): byproduct[key]=(byproduct[key][0],zone)
-        queue.append([owner,list(byproduct.values())])
-    return [[(owner, products) for owner,products in queue[i:i+len(capacities)]]
-            for i in range(0,len(queue),len(capacities))]
+        products=list(byproduct.values())
+        products.sort(key=lambda item:-rank.get(item[1],0))
+        queue.append([owner,products])
+    pages=[]
+    while queue:
+        cards=[]
+        for cap in capacities:
+            if not queue: break
+            owner,products=queue[0]
+            lines=sum(max(1,len(textwrap.wrap(name,width=34,break_long_words=True,break_on_hyphens=False))) for name,_ in products)
+            if cards and cap<=2 and lines>cap*2: break
+            cards.append((owner,products));queue.pop(0)
+        pages.append(cards)
+    return pages
 
 def set_two_paragraphs(shape,label,value):
     body=shape.find('p:txBody',N);paras=body.findall('a:p',N)
@@ -365,7 +374,19 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         cols[1].set('w',str(int(cols[1].get('w'))+int(cols[2].get('w'))));grid.remove(cols[2])
         header_cells=rows[0].findall('a:tc',N);rows[0].remove(header_cells[2])
     for row in rows[1:]: table.remove(row)
-    heights=[overview_row_height(item) for item in items]
+    weights=[overview_row_height(item) for item in items]
+    frame_transform=frame.find('p:xfrm',N)
+    available=int(frame_transform.find('a:ext',N).get('cy'))-int(rows[0].get('h'))
+    heights=[int(available*w/sum(weights)) for w in weights]
+    heights[-1]+=available-sum(heights)
+    frame.find('p:xfrm/a:ext',N).set('cy',str(int(rows[0].get('h'))+sum(heights)))
+    for background in tree.findall('p:sp',N):
+        x,y=position(background)
+        trans=background.find('p:spPr/a:xfrm',N)
+        ext=trans.find('a:ext',N) if trans is not None else None
+        if not content(background) and x is not None and abs(x-round(.37*914400))<100000 and abs(y-round(.89*914400))<100000 and ext is not None and int(ext.get('cy'))>3*914400:
+            off=trans.find('a:off',N);foff=frame_transform.find('a:off',N);fext=frame_transform.find('a:ext',N)
+            off.set('x',foff.get('x'));off.set('y',foff.get('y'));ext.set('cx',fext.get('cx'));ext.set('cy',fext.get('cy'))
     spans={};start=0
     while start<len(items):
         end=start+1;key=items[start].get('_product_key',product_key(items[start]['product']))
@@ -421,88 +442,6 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         if status.get('promnenie'): put_icon('promnenie',485888+1246136-130000)
     return root
 
-def high_detail_slide(root,t,quotes,legend):
-    tree=shapes(root)
-    source_names=list(t.get('sources', [])) or ['Источник не указан']
-    midpoint=(len(source_names)+1)//2
-    source_columns=[', '.join(source_names[:midpoint]), ', '.join(source_names[midpoint:])]
-    for child in list(tree):
-        x,y=position(child)
-        if child.tag==f'{{{P}}}pic' and x is not None and y < 6*914400:
-            tree.remove(child)
-            continue
-        if child.tag==f'{{{P}}}grpSp' and x is not None and y>6*914400:
-            tree.remove(child)
-            continue
-        if child.tag==f'{{{P}}}cxnSp' and x is not None and x>8*914400 and y>3*914400:
-            tree.remove(child); continue
-        if child.tag!=f'{{{P}}}sp': continue
-        txt=content(child)
-        if not txt:
-            if x is not None and x>8*914400 and y>3*914400: tree.remove(child)
-            elif x is not None and abs(x-0.4*914400)<100000 and abs(y-1.2*914400)<100000:
-                ext=child.find('.//a:xfrm/a:ext',N)
-                if ext is not None and int(ext.get('cy'))>914400: ext.set('cy',str(2800000))
-            continue
-        if txt=='Рабочее место SberOS': product_title(child,t['product'])
-        elif 'Источников' in txt: replace_text(child,source_count_label(len(t['sources'])))
-        elif 'MAU' in txt: replace_text(child,f"{int(t['mau'])} MAU" if valid_signal(t.get('mau')) else 'MAU: —')
-        elif 'Сигнал' in txt: replace_text(child,f"{display_signal_count(t.get('count'), '?')} сигналов")
-        elif txt=='SberUser':
-            replace_text(child,str(t.get('owner') or ''))
-            for rp in child.findall('.//a:rPr',N): rp.set('sz','650' if len(str(t.get('owner') or ''))>8 else '800')
-        elif txt=='Источники:': pass
-        elif txt=='1': pass
-        elif txt.startswith('Карточка ОС') or txt.startswith('чат «Почта для SberOS'):
-            source_index=0 if txt.startswith('Карточка ОС') else 1
-            if not source_columns[source_index]: tree.remove(child)
-            else:
-                replace_text(child,source_columns[source_index])
-                for rp in child.findall('.//a:rPr',N): rp.set('sz','800')
-                transform=child.find('.//a:xfrm',N)
-                if transform is not None:
-                    transform.find('a:off',N).set('x',str(round((.8 if source_index==0 else 5.1)*914400)))
-                    transform.find('a:ext',N).set('cx',str(round(4.1*914400)))
-        else: tree.remove(child)
-    frame=root.find('.//p:graphicFrame',N)
-    table=frame.find('.//a:tbl',N);row=table.findall('a:tr',N)[1];row.set('h','2150000');cells=row.findall('a:tc',N)
-    frame.find('p:xfrm/a:ext',N).set('cy',str(2673748))
-    for cell in cells: replace_text(cell,'')
-    status=t.get('status_record',{})
-    requested=[]
-    if recurrence_code(t): requested.append(recurrence_code(t))
-    requested.extend(status.get('controls',[]))
-    if status.get('after_close'): requested.append('after_close')
-    if status.get('mitigation'): requested.append(status['mitigation'])
-    if status.get('promnenie'): requested.append('promnenie')
-    if any(name not in legend for name in requested): raise ValueError('В шаблоне не найдены необходимые значки легенды')
-    replace_text(cells[2],'');replace_text(cells[3],'')
-    replace_text(cells[4],' '.join(filter(None,[status.get('version',''),status.get('deadline','')])))
-    def icon(name,x,y,scale=1):
-        pic=copy.deepcopy(legend[name]);cnv=pic.find('.//p:cNvPr',N)
-        cnv.set('id',str(1+max((int(e.get('id','0')) for e in root.findall('.//p:cNvPr',N)),default=0)))
-        cnv.set('descr',ICON_DESCRIPTIONS[name])
-        blip=pic.find('.//a:blip',N);old=blip.get(f'{{{R}}}embed');blip.set(f'{{{R}}}embed','rIdDetailIcon'+old)
-        xfrm=pic.find('.//a:xfrm',N);off=xfrm.find('a:off',N);ext=xfrm.find('a:ext',N)
-        if scale!=1: ext.set('cx',str(int(int(ext.get('cx'))*scale)));ext.set('cy',str(int(int(ext.get('cy'))*scale)))
-        off.set('x',str(int(x-int(ext.get('cx'))/2)));off.set('y',str(int(y-int(ext.get('cy'))/2)));tree.append(pic)
-    base=348231+569958+7160404;col=1259368;row_y=1100369+523748+2150000/2
-    if recurrence_code(t): icon(recurrence_code(t),base+col/2,row_y)
-    controls_icons=list(status.get('controls',[]))+(['after_close'] if status.get('after_close') else [])
-    for i,name in enumerate(controls_icons): icon(name,base+col+col*(i+1)/(len(controls_icons)+1),row_y,.65 if len(controls_icons)>3 else 1)
-    if status.get('mitigation'): icon(status['mitigation'],base+2*col+140000,row_y)
-    if status.get('promnenie'): icon('promnenie',348231+569958/2,1100369+523748+180000)
-    body=cells[1].find('a:txBody',N);replace_text(cells[1],t['topic']+' ['+str(t['sheet'])+'!'+str(t['row'])+']')
-    for quote in quotes:
-        if not quote.get('text'): continue
-        paragraph=copy.deepcopy(body.find('a:p',N))
-        holder=ET.Element(f'{{{A}}}tc');tmp=ET.SubElement(holder,f'{{{A}}}txBody');tmp.append(paragraph)
-        source=str(quote.get('source') or 'Источник не указан')
-        replace_text(holder,'«'+quote['text']+'» ['+source+'; '+str(quote['sheet'])+'!'+str(quote['row'])+']')
-        for rp in paragraph.findall('.//a:rPr',N): rp.set('b','0');rp.set('sz','1100')
-        body.append(paragraph)
-    return root
-
 def detail_slide(root,t,quote,number):
     tree=shapes(root)
     for s in list(tree):
@@ -546,6 +485,7 @@ def filtered_rels(data, slide=False):
     return r
 
 def make_deck(template, output, state):
+    from .detail_widgets import detail_pages, render_detail
     with ZipFile(template) as source:
         src={i.filename:source.read(i.filename) for i in source.infolist() if not i.is_dir()}
     for needed in ('ppt/slides/slide1.xml','ppt/slides/slide2.xml','ppt/slides/slide3.xml','ppt/slides/slide4.xml','ppt/slides/slide5.xml','ppt/slides/slide6.xml','ppt/slides/slide12.xml','ppt/slides/slide47.xml'):
@@ -580,15 +520,15 @@ def make_deck(template, output, state):
             pages=overview_pages(rows)
             for idx,part in enumerate(pages,1):
                 plans.append((6,lambda r,owner=owner,part=part,idx=idx,total=len(pages),is_ux=is_ux:table_slide(r,owner,part,idx,total,is_ux)))
-            for t in selected:
-                if t['zone'] != 'высокое внимание': continue
-                # One topic per detail slide; full source rows and texts stay in audit.
-                title=str(t['topic'])
-                if len(title)>250: title=title[:249].rsplit(' ',1)[0].rstrip()+'…'
-                fragment=dict(t,topic=title)
-                quotes=t.get('presentation_quotes', t.get('quotes',[])[:2])
-                if not quotes: quotes=[{'text':'','source':None,'sheet':t['sheet'],'row':t['row']}]
-                plans.append((12,lambda r,t=fragment,quotes=quotes:high_detail_slide(r,t,quotes,legend)))
+        products={}
+        for t in items: products.setdefault(product_key(t['product']),[]).append(t)
+        for product_topics in products.values():
+            high=[t for t in product_topics if t.get('zone')=='высокое внимание']
+            if not high: continue
+            product_sources=list(dict.fromkeys(str(source).strip() for t in product_topics for source in t.get('sources',[]) if str(source).strip()))
+            product_pages=detail_pages(high)
+            for i,part in enumerate(product_pages):
+                plans.append((12,lambda r,part=part,sources=product_sources,last=(i==len(product_pages)-1),product_topics=product_topics:render_detail(r,part,legend,sources,last,product_topics)))
         spans[owner]=(group_start,len(plans))
     if report:
         for number in (54,55,56):
@@ -622,6 +562,12 @@ def make_deck(template, output, state):
         relsource=f'ppt/slides/_rels/slide{template_no}.xml.rels'
         if relsource in src:
             rels=filtered_rels(src[relsource],True)
+            if template_no==12:
+                # Keep only the known M-App link attached to the template's detail widget.
+                for relation in xml(src[relsource]):
+                    if (relation.get('Type','').endswith('/hyperlink') and relation.get('TargetMode')=='External'
+                        and relation.get('Target','').startswith('https://mapp.sberbank.ru/')):
+                        rels.append(copy.deepcopy(relation))
             # Transfer references for icons copied from the source legend.
             used={v for el in slide.iter() for k,v in el.attrib.items() if k.startswith('{'+R+'}')}
             for rid in sorted(used):
