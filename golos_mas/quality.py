@@ -78,7 +78,7 @@ class QualityAgent:
                 warnings.append(f"{topics[0]['sheet']}!{topics[0]['row']}: источники дополнены по названию продукта; связи отдельных обращений с темами не предполагаются")
             for field,detail in product_metrics(topics).items():
                 if detail['conflict'] or detail['invalid_references']:
-                    warnings.append(f"{topics[0]['sheet']}!{topics[0]['row']}: {field}: некорректные или противоречивые значения по продукту; показатель не выведен")
+                    warnings.append(f"{topics[0]['sheet']}!{topics[0]['row']}: {field}: есть некорректные или различающиеся значения по продукту. Сверьте наблюдаемые значения в product_metrics аудита")
         for t in state['topics']:
             if len(str(t.get('topic') or ''))>250:
                 warnings.append(f"{t['sheet']}!{t['row']}: длинная тема может не поместиться на слайде; проверьте визуально")

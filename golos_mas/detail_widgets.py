@@ -79,6 +79,28 @@ def render_detail(root, topics, legend, sources, last, product_topics, number_of
             continue
         if tag!=f'{{{P}}}sp': continue
         txt=content(child).strip()
+        # The score and delta boxes occupy fixed positions in slide 12.
+        # The contents of those boxes in the template can change each month.
+        geometry = child.find('p:spPr/a:prstGeom', N)
+        is_triangle = geometry is not None and geometry.get('prst') == 'triangle'
+        if not is_triangle and child.find('p:txBody', N) is not None and x is not None and 6.55 < y/914400 < 7.13 and 11.45 < x/914400 < 13:
+            if last:
+                signed = x/914400 >= 12.30
+                opinion = y/914400 < 6.80
+                field = ('opinion_delta' if signed else 'opinion_score') if opinion else ('csat_delta' if signed else 'csat')
+                value = format_metric(metrics[field], signed=signed)
+                replace_text(child, value)
+                tr = child.find('.//a:xfrm', N)
+                tr.find('a:off', N).set('x', str(round((12.11 if signed else 11.24)*914400)))
+                tr.find('a:ext', N).set('cx', str(round(.84*914400)))
+                body = child.find('p:txBody/a:bodyPr', N)
+                if body is not None:
+                    body.set('wrap', 'none')
+                for props in child.findall('.//a:rPr', N):
+                    props.set('sz', str(max(650, min(1250 if not signed else 1050, 9200//max(1,len(value))))))
+            else:
+                tree.remove(child)
+            continue
         if not txt:
             if x is not None and abs(x-.4*914400)<100000 and abs(y-1.2*914400)<100000:
                 transform=child.find('.//a:xfrm',N)
@@ -127,26 +149,6 @@ def render_detail(root, topics, legend, sources, last, product_topics, number_of
                 props.insert(index,fill)
         elif txt in ('Дополнительно:', 'ПроМнение', 'CSAT'):
             if not last: tree.remove(child)
-        elif txt in ('4,28','4,4'):
-            if not last: tree.remove(child)
-            else:
-                replace_text(child,format_metric(metrics['opinion_score' if txt=='4,28' else 'csat']))
-                tr=child.find('.//a:xfrm',N)
-                if tr is not None:
-                    tr.find('a:off',N).set('x',str(round(11.65*914400)))
-                    tr.find('a:ext',N).set('cx',str(round(.62*914400)))
-                body=child.find('p:txBody/a:bodyPr',N)
-                if body is not None: body.set('wrap','none')
-        elif txt.replace(' ','') in ('+0,48','-0,1'):
-            if not last: tree.remove(child)
-            else:
-                replace_text(child,format_metric(metrics['opinion_delta' if '+' in txt else 'csat_delta'],signed=True))
-                tr=child.find('.//a:xfrm',N)
-                if tr is not None:
-                    tr.find('a:off',N).set('x',str(round(12.32*914400)))
-                    tr.find('a:ext',N).set('cx',str(round(.62*914400)))
-                body=child.find('p:txBody/a:bodyPr',N)
-                if body is not None: body.set('wrap','none')
         else: tree.remove(child)
 
     def unique_id(element):

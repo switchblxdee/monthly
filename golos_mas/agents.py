@@ -27,7 +27,9 @@ def display_signal_count(value, missing='нет данных'):
 
 def locate(headers, *names):
     def header_key(value):
-        return re.sub(r'^[~≈\s]+', '', norm(value))
+        key = re.sub(r'^[~≈\s\u200b\ufeff]+', '', norm(value))
+        key = re.sub(r'(?<!\w)[cс][sѕ][aа][tт](?!\w)', 'csat', key)
+        return re.sub(r'\bпро\s+мнени', 'промнени', key)
     for n in names:
         for i, h in enumerate(headers):
             if header_key(h) == header_key(n):
@@ -59,9 +61,9 @@ COLUMN_ALIASES = {
     'text': ('маскированный текст из источника',), 'likes': ('лайки',), 'signal': ('сигнал', 'сигналы'),
     'support': ('ответы поддержки',),
     'comment': ('комментарий', 'комментарии'),
-    'csat': ('csat',), 'csat_delta': ('дельта csat', 'динамика csat', 'изменение csat'),
+    'csat': ('csat',), 'csat_delta': ('дельта csat', 'динамика csat', 'изменение csat', 'csat дельта', 'δ csat', '∆ csat'),
     'opinion_score': ('промнение', 'про мнение'),
-    'opinion_delta': ('дельта промнения', 'дельта промнение', 'дельта про мнения', 'динамика промнения'),
+    'opinion_delta': ('дельта промнения', 'дельта промнение', 'дельта про мнения', 'динамика промнения', 'изменение промнения', 'промнение дельта', 'δ промнения', '∆ промнения'),
 }
 
 

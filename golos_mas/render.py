@@ -1,3 +1,4 @@
+from .product_metrics import product_metrics, format_metric
 from collections import defaultdict
 from html import escape
 from pathlib import Path
@@ -71,7 +72,12 @@ def build_pages(state):
                     lines.extend([f'Тема: {short}',f"Приоритет: {t['zone']}; сигналов: {display_signal_count(t.get('count'))}"])
                     quotes=t.get('presentation_quotes', t.get('quotes',[])[:2])
                     lines.extend('«'+q['text']+'»' for q in quotes if q.get('text'))
-                if idx==len(detail)-1: lines.append('Источники: '+(', '.join(sources) or 'не указаны'))
+                if idx == len(detail)-1:
+                    metrics = product_metrics(product_topics)
+                    for label, score, delta in (('CSAT', 'csat', 'csat_delta'), ('ПроМнение', 'opinion_score', 'opinion_delta')):
+                        if metrics[score]['observed_values'] or metrics[delta]['observed_values']:
+                            lines.append(f'{label} {format_metric(metrics[score])}  ·  Δ {format_metric(metrics[delta], signed=True)}')
+                    lines.append('Источники: '+(', '.join(sources) or 'не указаны'))
                 pages.append(page(str(part[0]['product']),wrap_paragraphs(lines),owner))
     return pages
 

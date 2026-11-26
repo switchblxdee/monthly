@@ -29,7 +29,7 @@ def test_metrics_repeated_values_signed_delta_and_conflict():
     assert format_metric(values['opinion_delta'],True)=='+1'
     assert len(values['csat']['references'])==2
     topics[1]['csat']=3.5
-    assert product_metrics(topics)['csat']['conflict'] and format_metric(product_metrics(topics)['csat'])=='—'
+    assert product_metrics(topics)['csat']['conflict'] and format_metric(product_metrics(topics)['csat'])=='3,5…4,46'
 
 
 def test_month_inferred_from_priority_tabs_and_detail_dates(tmp_path):
@@ -75,8 +75,8 @@ def test_product_sources_include_other_topics_without_assigning_their_quotes():
 def test_new_columns_and_recurrence_are_shown_in_generated_deck(tmp_path):
     w=Workbook();p=w.active;p.title='приоритет ноябрь'
     p.append(['владелец','продукт','тема','кол-во сигналов','общий балл','длительность','Комментарий','CSAT','дельта CSAT','ПроМнение','дельта ПроМнения'])
-    p.append(['Команда','P','Ошибка A',12,9,1,'возобновилось',4.46,-0.03,4.3,1])
-    p.append(['Команда','P','Ошибка B',10,10,3,None,4.46,-0.03,4.3,1])
+    p.append(['Команда','P','Ошибка A',12,9,1,'возобновилось','4,46','−0,03','4,3','+1'])
+    p.append(['Команда','P','Ошибка B',10,10,3,None,'=4.46',None,'—',None])
     d=w.create_sheet('SW');d.append(['дата','источник','продукт','тема','Маскированный текст из источника','лайки','сигнал'])
     d.append(['01.11.2026','Чат A','P','Ошибка A','185 - 14:00:07 - 151245702 - Пользователь 1 Клиент не может войти',0,1])
     d.append(['02.11.2026','Чат B','P','Ошибка B','Вторая ошибка',0,1])
@@ -86,7 +86,12 @@ def test_new_columns_and_recurrence_are_shown_in_generated_deck(tmp_path):
     assert [recurrence_code(t) for t in result['topics']]==['resumed','long']
     with ZipFile(out) as deck:
         data=' '.join(deck.read(n).decode() for n in deck.namelist() if n.startswith('ppt/slides/slide') and n.endswith('.xml'))
-        assert all(x in data for x in ('4,46','-0,03','4,3','+1','Клиент не может войти'))
+        detail = next(ET.fromstring(deck.read(n)) for n in deck.namelist()
+                      if n.startswith('ppt/slides/slide') and n.endswith('.xml')
+                      and 'Клиент не может войти'.encode() in deck.read(n))
+        exact_text = [(node.text or '').strip() for node in detail.iter() if node.tag.endswith('}t')]
+        assert all(x in exact_text for x in ('CSAT', 'ПроМнение', '4,46', '-0,03', '4,3', '+1'))
+        assert exact_text.count('+1') == exact_text.count('-0,03') == 1
         assert '151245702' not in data and '14:00:07' not in data
         assert 'Возобновилось обсуждение' in data and 'Повторяется 3 месяца или более' in data
 
