@@ -61,19 +61,12 @@ class QualityAgent:
                 warnings.append(f"{entry['ref']}: одно название продукта встречается у нескольких владельцев; в общем количестве названий продукт учтён один раз")
         from .product_metrics import product_metrics
         from .source_inventory import product_source_rows
-        from .detail_widgets import source_widget_layout
         products={}
         for topic in state['topics']:
             products.setdefault((product_key(topic.get('owner')),product_key(topic.get('product'))),[]).append(topic)
         for topics in products.values():
             product=product_key(topics[0]['product'])
             refs=product_source_rows(topics,state.get('signals',[]),len(owners_by_product.get(product,{}).get('owners',set()))<=1)
-            if state.get('template') and any(t.get('zone') == 'высокое внимание' for t in topics):
-                sources = list(dict.fromkeys(str(ref['source']).strip() for ref in refs
-                                             if str(ref.get('source') or '').strip()))
-                _, hidden = source_widget_layout(sources)
-                if hidden:
-                    warnings.append(f"{topics[0]['sheet']}!{topics[0]['row']}: {hidden} источников продукта не поместились на слайде. Полный список в product_sources аудита")
             if any(ref['basis']=='product' for ref in refs):
                 warnings.append(f"{topics[0]['sheet']}!{topics[0]['row']}: источники дополнены по названию продукта; связи отдельных обращений с темами не предполагаются")
             for field,detail in product_metrics(topics).items():

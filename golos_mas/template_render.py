@@ -109,7 +109,7 @@ def summary(root,state):
 ZONE_COLORS={'высокое внимание':'F44552','потенциальный риск':'F5A800','наблюдение':'AAB6C8'}
 ICON_DESCRIPTIONS={'new':'Новая тема','two':'Повторяется 2 месяца','long':'Повторяется 3 месяца или более','resumed':'Возобновилось обсуждение','aibolit':'АйболИТ+','backlog':'Бэклог команды','pain_candidate':'Кандидат на боль','promise_monitor':'Мониторинг обещаний','after_close':'Повтор после закрытия','done':'Выполнено','analysis':'На анализе','release':'Релиз','limitations':'Текущие ограничения','promnenie':'Упоминание в ПроМнении'}
 
-def replace_lines(element,header,products):
+def replace_lines(element,header,products,swatches=None):
     replace_text(element,header)
     body=element.find('p:txBody',N)
     if body is None: return
@@ -119,6 +119,8 @@ def replace_lines(element,header,products):
             if fit.tag in (f'{{{A}}}spAutoFit',f'{{{A}}}noAutofit',f'{{{A}}}normAutofit'): bodypr.remove(fit)
         ET.SubElement(bodypr,f'{{{A}}}normAutofit')
     p=body.find('a:p',N);first=p.find('a:r',N)
+    for paragraph in body.findall('.//a:pPr', N):
+        paragraph.attrib.update(marL='0', indent='0')
     line_count=1+sum(max(1,len(textwrap.wrap(name,width=34,break_long_words=True,break_on_hyphens=False))) for name,_ in products)
     font_size=str(max(800,min(1100,int(1100*14/max(14,line_count)))))
     for rp in body.findall('.//a:rPr',N): rp.set('sz',font_size)
@@ -133,13 +135,31 @@ def replace_lines(element,header,products):
         rp=marker.find('a:rPr',N)
         if rp is not None:
             for fill in rp.findall('a:solidFill',N): rp.remove(fill)
-            fill=ET.Element(f'{{{A}}}solidFill');ET.SubElement(fill,f'{{{A}}}srgbClr',{'val':ZONE_COLORS.get(zone,'8064E8')});rp.insert(0,fill)
+            zone = zone or 'наблюдение'
+            if swatches and zone in swatches:
+                fill = copy.deepcopy(swatches[zone])
+            else:
+                fill = ET.Element(f'{{{A}}}solidFill')
+                ET.SubElement(fill, f'{{{A}}}srgbClr', {'val': ZONE_COLORS[zone]})
+            order = 1 if len(rp) and rp[0].tag == f'{{{A}}}ln' else 0
+            rp.insert(order, fill)
         add_child(marker)
         run=copy.deepcopy(first);run.find('a:t',N).text=product;add_child(run)
 
 def contents_slide(root,cards,spans,page,total,high_count):
     tree=shapes(root)
     card_template=None;range_template=None
+    swatches = {}
+    for child in tree.findall('p:grpSp', N):
+        x, y = position(child)
+        if x is None or not 7.0 < y/914400 < 7.2:
+            continue
+        color = child.find('.//a:solidFill', N)
+        if color is None:
+            continue
+        for pos, zone in zip((.448, 3.246, 6.220), ZONE_COLORS):
+            if abs(x/914400 - pos) < .03:
+                swatches[zone] = color
     for child in list(tree):
         if child.tag!=f'{{{P}}}sp': continue
         text=content(child); x,y=position(child)
@@ -165,11 +185,12 @@ def contents_slide(root,cards,spans,page,total,high_count):
             tr=element.find('p:spPr/a:xfrm',N);off=tr.find('a:off',N);ext=tr.find('a:ext',N)
             off.set('x',str(round(x*914400)));off.set('y',str(round(y*914400)))
             if element is card: ext.set('cx',str(round(w*914400)));ext.set('cy',str(round(h*914400)))
-        number=list(spans).index(owner)+1; name='Мониторинг обещаний' if owner is PROMISES_SECTION else owner
-        replace_lines(card,f'{number:02} {name}',products);tree.append(card)
+        number=i+1; name='Мониторинг обещаний' if owner is PROMISES_SECTION else owner
+        replace_lines(card,f'{number:02} {name}',products,swatches);tree.append(card)
         tr=label.find('p:spPr/a:xfrm',N);tr.find('a:off',N).set('x',str(round((x+w-1.25)*914400)))
         tr.find('a:off',N).set('y',str(round((y+.10)*914400)));tr.find('a:ext',N).set('cx',str(round(1.15*914400)))
-        start,end=spans[owner];replace_text(label,f'Слайды {start}–{end}')
+        span = spans.get(owner)
+        replace_text(label, f'Слайды {span[0]}–{span[1]}' if span else 'Нет данных')
         for rp in label.findall('.//a:rPr',N): rp.set('sz','800')
         tree.append(label)
     return root
@@ -421,13 +442,6 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         if row_number in spans and spans[row_number]>1: cells[0].set('rowSpan',str(spans[row_number]))
         elif row_number not in spans:
             cells[0].set('vMerge','1');replace_text(cells[0],'')
-        if row_number<len(items)-1 and any(row_number==start+length-1 for start,length in spans.items()):
-            product_props=cells[0].find('a:tcPr',N); topic_props=cells[1].find('a:tcPr',N)
-            source_line=topic_props.find('a:lnB',N) if topic_props is not None else None
-            if product_props is not None and source_line is not None:
-                for old_line in product_props.findall('a:lnB',N): product_props.remove(old_line)
-                before=next((i for i,child in enumerate(product_props) if child.tag not in (f'{{{A}}}lnL',f'{{{A}}}lnR',f'{{{A}}}lnT')),len(product_props))
-                product_props.insert(before,copy.deepcopy(source_line))
         for rp in cells[-1].findall('.//a:rPr',N): rp.set('sz','750')
         if not ux:
             zone=cells[2].find('a:tcPr',N)
@@ -459,7 +473,34 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         mitigation=status.get('mitigation')
         if mitigation: put_icon(mitigation,control_start+888360+130000)
         if status.get('promnenie'): put_icon('promnenie',485888+1246136-130000)
+    apply_product_borders(table, spans)
     return root
+
+def apply_product_borders(table, spans):
+    rows = table.findall('a:tr', N)[1:]
+    line_order = ('lnL', 'lnR', 'lnT', 'lnB')
+    for start, length in spans.items():
+        end = start + length - 1
+        if end + 1 >= len(rows):
+            continue
+        cells = rows[end].findall('a:tc', N)
+        separator = cells[1].find('a:tcPr/a:lnB', N)
+        if separator is None or separator.find('a:solidFill', N) is None:
+            continue
+        edges = {(start, 'lnB'), (end, 'lnB'), (end + 1, 'lnT')}
+        for index, tag in edges:
+            props = rows[index].find('a:tc/a:tcPr', N)
+            if props is None:
+                continue
+            line = props.find('a:' + tag, N)
+            if line is not None:
+                props.remove(line)
+            new_line = copy.deepcopy(separator)
+            new_line.tag = f'{{{A}}}{tag}'
+            before = next((i for i, child in enumerate(props)
+                           if child.tag.rsplit('}', 1)[-1] not in line_order[:line_order.index(tag)]), len(props))
+            props.insert(before, new_line)
+
 
 def remove_bottom_border(cell):
     props=cell.find('a:tcPr',N)
@@ -512,7 +553,7 @@ def filtered_rels(data, slide=False):
     return r
 
 def make_deck(template, output, state):
-    from .detail_widgets import detail_pages, render_detail
+    from .detail_widgets import detail_source_pages, render_detail
     from .source_inventory import product_source_rows
     with ZipFile(template) as source:
         src={i.filename:source.read(i.filename) for i in source.infolist() if not i.is_dir()}
@@ -537,7 +578,7 @@ def make_deck(template, output, state):
     for t in state['topics']: product_owners[product_key(t['product'])].add(product_key(t.get('owner')))
     report=state.get('promise_report')
     toc_groups=dict(groups)
-    if report: toc_groups[PROMISES_SECTION]=[{'product':'Статистика и переносы'}]
+    toc_groups[PROMISES_SECTION]=[{'product':'Статистика и переносы'}] if report else []
     toc_pages=contents_cards(toc_groups);spans={}
     high_count=len({product_key(t['product']) for t in state['topics'] if t['zone']=='высокое внимание'})
     plans=[(1,lambda r:cover(r,state['period'],bool(report))),(2,lambda r:summary(r,state))]
@@ -561,10 +602,13 @@ def make_deck(template, output, state):
             if not high: continue
             refs=product_source_rows(product_topics,state.get('signals',[]),len(product_owners[product_key(product_topics[0]['product'])])==1)
             product_sources=list(dict.fromkeys(str(r.get('source') or '').strip() for r in refs if str(r.get('source') or '').strip()))
-            product_pages=detail_pages(high)
-            for i,part in enumerate(product_pages):
-                offset=sum(len(page) for page in product_pages[:i])
-                plans.append((12,lambda r,part=part,sources=product_sources,last=(i==len(product_pages)-1),product_topics=product_topics,offset=offset:render_detail(r,part,legend,sources,last,product_topics,offset)))
+            product_pages = detail_source_pages(high, product_sources)
+            offset = 0
+            for i, (part, layout) in enumerate(product_pages):
+                plans.append((12, lambda r, part=part, sources=product_sources, last=(i==len(product_pages)-1),
+                              product_topics=product_topics, offset=offset, layout=layout:
+                              render_detail(r, part, legend, sources, last, product_topics, offset, layout)))
+                offset += len(part)
         spans[owner]=(group_start,len(plans))
     if report:
         for number in (54,55,56):

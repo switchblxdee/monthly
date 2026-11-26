@@ -345,9 +345,10 @@ def test_contents_uses_calculated_zone_color(tmp_path):
     with ZipFile(out) as deck:
         slide=ET.fromstring(deck.read('ppt/slides/slide3.xml'))
         texts=' '.join(el.text or '' for el in slide.findall('.//a:t',ns))
-        colors=[el.get('val') for el in slide.findall('.//a:rPr/a:solidFill/a:srgbClr',ns)]
+        colors=[el.get('val') for el in slide.findall('.//a:rPr/a:solidFill/a:schemeClr',ns)]
         assert 'Продуктов с темами высокого внимания: 1' in texts
-        assert 'F44552' in colors and 'UX / зона не указана' not in texts
+        assert 'accent6' in colors and 'UX / зона не указана' not in texts
+        assert 'Мониторинг обещаний' in texts and 'Нет данных' in texts
         assert 'темы в зоне «высокое внимание»' in texts
 
 @pytest.mark.skipif(not os.environ.get('GOLOS_TEST_TEMPLATE'), reason='Set GOLOS_TEST_TEMPLATE to the original example deck')

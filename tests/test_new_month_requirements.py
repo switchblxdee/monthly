@@ -92,6 +92,22 @@ def test_new_columns_and_recurrence_are_shown_in_generated_deck(tmp_path):
         exact_text = [(node.text or '').strip() for node in detail.iter() if node.tag.endswith('}t')]
         assert all(x in exact_text for x in ('CSAT', 'ПроМнение', '4,46', '-0,03', '4,3', '+1'))
         assert exact_text.count('+1') == exact_text.count('-0,03') == 1
+        ns = {'a':'http://schemas.openxmlformats.org/drawingml/2006/main',
+              'p':'http://schemas.openxmlformats.org/presentationml/2006/main'}
+        labels = {}
+        for shape in detail.findall('.//p:spTree/p:sp', ns):
+            geom = shape.find('p:spPr/a:prstGeom', ns)
+            transform = shape.find('p:spPr/a:xfrm', ns)
+            if geom is not None and geom.get('prst') == 'triangle':
+                dims = transform.find('a:ext', ns)
+                assert dims.attrib == {'cx': '108000', 'cy': '108000'}
+                color = shape.find('p:spPr/a:solidFill/a:srgbClr', ns)
+                labels[transform.get('rot')] = color.get('val')
+        assert labels == {'0': '28A745', '10800000': 'E74755'}
+        header_flags = [pic for pic in detail.findall('.//p:spTree/p:pic', ns)
+                        if (off := pic.find('p:spPr/a:xfrm/a:off', ns)) is not None
+                        and int(off.get('x')) < 914400 and 1143000 < int(off.get('y')) < 1508760]
+        assert len(header_flags) == 1
         assert '151245702' not in data and '14:00:07' not in data
         assert 'Возобновилось обсуждение' in data and 'Повторяется 3 месяца или более' in data
 
@@ -124,12 +140,14 @@ def test_quote_keeps_times_and_reference_numbers_inside_customer_words():
     assert customer_quote('185 - 14:00:07 - 151245702: Пользователь 1 С 10:30 ошибка, обращение 123456789.') == 'С 10:30 ошибка, обращение 123456789.'
 
 
-def test_large_source_list_fits_footer_with_audit_marker():
-    from golos_mas.detail_widgets import source_widget_layout
+def test_large_source_list_continues_without_hiding_names():
+    from golos_mas.detail_widgets import detail_source_pages, SOURCE_HEIGHT, EMU_PER_INCH
 
     sources = [f'Источник {i} с длинным названием для проверки вёрстки' for i in range(40)]
-    widgets, hidden = source_widget_layout(sources)
-    assert 0 < hidden < len(sources)
-    assert [name for name, *_ in widgets[:-1]] == sources[:len(sources) - hidden]
-    assert widgets[-1][0] == f'Ещё {hidden} · в аудите'
-    assert all(y + height <= 7.42 for _, _, y, height in widgets)
+    pages = detail_source_pages([{'topic': 'Проблема'}], sources)
+    assert len(pages) > 1
+    assert [name for _, widgets in pages for name, *_ in widgets] == sources
+    for _, widgets in pages:
+        for _, x, y, width in widgets:
+            assert x + width <= 8.87 + 1e-6
+            assert y + SOURCE_HEIGHT / EMU_PER_INCH <= 7.42
