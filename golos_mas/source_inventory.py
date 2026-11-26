@@ -1,5 +1,24 @@
 """Keep source provenance and counts with the report throughout the graph."""
 from collections import Counter, defaultdict
+import re
+
+def product_identity(value):
+    return re.sub(r'\s+',' ',str(value or '').strip().casefold().replace('ё','е'))
+
+def product_source_rows(topics, signals, allow_product_lookup=True):
+    """Sources across all product rows; topic links and direct product lookup stay traceable."""
+    product=product_identity(topics[0].get('product')) if topics else ''
+    rows={}
+    for topic in topics:
+        for record in topic.get('matches',[]):
+            key=(record['sheet'],record['row'])
+            rows[key]={'sheet':key[0],'row':key[1],'source':record.get('source'),'basis':'topic_match'}
+    if allow_product_lookup and product:
+        for record in signals:
+            if product_identity(record.get('product')) != product: continue
+            key=(record['sheet'],record['row'])
+            rows.setdefault(key,{'sheet':key[0],'row':key[1],'source':record.get('source'),'basis':'product'})
+    return list(rows.values())
 
 
 class SourceInventory:

@@ -107,7 +107,7 @@ def summary(root,state):
     return root
 
 ZONE_COLORS={'высокое внимание':'F44552','потенциальный риск':'F5A800','наблюдение':'AAB6C8'}
-ICON_DESCRIPTIONS={'new':'Новая тема','two':'Повторяется 2 месяца','long':'Повторяется более 3 месяцев','resumed':'Возобновилось обсуждение','aibolit':'АйболИТ+','backlog':'Бэклог команды','pain_candidate':'Кандидат на боль','promise_monitor':'Мониторинг обещаний','after_close':'Повтор после закрытия','done':'Выполнено','analysis':'На анализе','release':'Релиз','limitations':'Текущие ограничения','promnenie':'Упоминание в ПроМнении'}
+ICON_DESCRIPTIONS={'new':'Новая тема','two':'Повторяется 2 месяца','long':'Повторяется 3 месяца или более','resumed':'Возобновилось обсуждение','aibolit':'АйболИТ+','backlog':'Бэклог команды','pain_candidate':'Кандидат на боль','promise_monitor':'Мониторинг обещаний','after_close':'Повтор после закрытия','done':'Выполнено','analysis':'На анализе','release':'Релиз','limitations':'Текущие ограничения','promnenie':'Упоминание в ПроМнении'}
 
 def replace_lines(element,header,products):
     replace_text(element,header)
@@ -129,18 +129,17 @@ def replace_lines(element,header,products):
     for index,(product,zone) in enumerate(products):
         add_child(ET.Element(f'{{{A}}}br'))
         if index==0: add_child(ET.Element(f'{{{A}}}br'))
-        marker=copy.deepcopy(first); marker.find('a:t',N).text='◉ ' if zone else '• '
+        marker=copy.deepcopy(first); marker.find('a:t',N).text='◉ '
         rp=marker.find('a:rPr',N)
-        if rp is not None and zone:
+        if rp is not None:
             for fill in rp.findall('a:solidFill',N): rp.remove(fill)
-            fill=ET.Element(f'{{{A}}}solidFill');ET.SubElement(fill,f'{{{A}}}srgbClr',{'val':ZONE_COLORS[zone]});rp.insert(0,fill)
+            fill=ET.Element(f'{{{A}}}solidFill');ET.SubElement(fill,f'{{{A}}}srgbClr',{'val':ZONE_COLORS.get(zone,'8064E8')});rp.insert(0,fill)
         add_child(marker)
         run=copy.deepcopy(first);run.find('a:t',N).text=product;add_child(run)
 
 def contents_slide(root,cards,spans,page,total,high_count):
     tree=shapes(root)
-    ranges={(2.5,1.1):0,(6.8,1.1):1,(11.1,1.1):2,(11.1,3.4):3,(11.1,4.7):4,(6.7,4.4):5}
-    neutral_legend=None
+    card_template=None;range_template=None
     for child in list(tree):
         if child.tag!=f'{{{P}}}sp': continue
         text=content(child); x,y=position(child)
@@ -148,23 +147,31 @@ def contents_slide(root,cards,spans,page,total,high_count):
             replace_text(child, f'Продуктов с темами высокого внимания: {high_count}' + (f' ({page}/{total})' if total>1 else ''))
         elif text.startswith('темы в зоне'):
             pass
-        elif text.startswith('07 Мониторинг'):
+        elif text.startswith('07 Мониторинг') or re.match(r'^0[1-6] ',text):
+            if card_template is None: card_template=copy.deepcopy(child)
             tree.remove(child)
-        elif re.match(r'^0[1-6] ',text):
-            index=int(text[1])-1
-            if index>=len(cards): tree.remove(child)
-            else:
-                owner,products=cards[index]
-                group_number=list(spans).index(owner)+1
-                label='Мониторинг обещаний' if owner is PROMISES_SECTION else owner
-                replace_lines(child,f'{group_number:02} {label}',products)
         elif text.startswith('Слайды'):
-            key=(round(x/914400,1),round(y/914400,1)) if x is not None else None
-            index=ranges.get(key)
-            if index is None or index>=len(cards): tree.remove(child)
-            else:
-                start,end=spans[cards[index][0]]
-                replace_text(child,f'Слайды {start}–{end}')
+            if range_template is None: range_template=copy.deepcopy(child)
+            tree.remove(child)
+    if card_template is None or range_template is None: raise ValueError('В шаблоне не найдены плашки оглавления')
+    cols=4; rows=max(1,math.ceil(len(cards)/cols)); w=3.10; h=5.50/rows-.12
+    for i,(owner,products) in enumerate(cards):
+        x=.35+(i%cols)*3.22;y=.98+(i//cols)*(h+.12)
+        card=copy.deepcopy(card_template);label=copy.deepcopy(range_template)
+        next_id=1+max((int(e.get('id','0')) for e in root.findall('.//p:cNvPr',N)),default=0)
+        for offset,element in enumerate((card,label)):
+            cnv=element.find('.//p:cNvPr',N)
+            if cnv is not None: cnv.set('id',str(next_id+offset))
+            tr=element.find('p:spPr/a:xfrm',N);off=tr.find('a:off',N);ext=tr.find('a:ext',N)
+            off.set('x',str(round(x*914400)));off.set('y',str(round(y*914400)))
+            if element is card: ext.set('cx',str(round(w*914400)));ext.set('cy',str(round(h*914400)))
+        number=list(spans).index(owner)+1; name='Мониторинг обещаний' if owner is PROMISES_SECTION else owner
+        replace_lines(card,f'{number:02} {name}',products);tree.append(card)
+        tr=label.find('p:spPr/a:xfrm',N);tr.find('a:off',N).set('x',str(round((x+w-1.25)*914400)))
+        tr.find('a:off',N).set('y',str(round((y+.10)*914400)));tr.find('a:ext',N).set('cx',str(round(1.15*914400)))
+        start,end=spans[owner];replace_text(label,f'Слайды {start}–{end}')
+        for rp in label.findall('.//a:rPr',N): rp.set('sz','800')
+        tree.append(label)
     return root
 
 def split_text(value,limit):
@@ -184,10 +191,11 @@ def product_key(value):
 
 
 def order_topics_by_product(items):
-    """Preserve product order of first appearance, then rank zones stably within product."""
+    """Rank products by summed signal counts, then number of high-attention topics."""
     groups={};rank={'высокое внимание':0,'потенциальный риск':1,'наблюдение':2,'не определена':3,'UX':4}
     for topic in items: groups.setdefault(product_key(topic['product']),[]).append(topic)
-    return [topic for product in groups.values() for topic in sorted(product,key=lambda t:rank.get(t.get('zone'),3))]
+    ordered=sorted(groups.values(),key=lambda product:(-sum(int(t['count']) for t in product if valid_signal(t.get('count'))),-sum(t.get('zone')=='высокое внимание' for t in product)))
+    return [topic for product in ordered for topic in sorted(product,key=lambda t:rank.get(t.get('zone'),3))]
 
 def overview_rows(items):
     rows=[]
@@ -233,17 +241,7 @@ def contents_cards(groups):
         products=list(byproduct.values())
         products.sort(key=lambda item:-rank.get(item[1],0))
         queue.append([owner,products])
-    pages=[]
-    while queue:
-        cards=[]
-        for cap in capacities:
-            if not queue: break
-            owner,products=queue[0]
-            lines=sum(max(1,len(textwrap.wrap(name,width=34,break_long_words=True,break_on_hyphens=False))) for name,_ in products)
-            if cards and cap<=2 and lines>cap*2: break
-            cards.append((owner,products));queue.pop(0)
-        pages.append(cards)
-    return pages
+    return [[(owner,products) for owner,products in queue]]
 
 def set_two_paragraphs(shape,label,value):
     body=shape.find('p:txBody',N);paras=body.findall('a:p',N)
@@ -328,11 +326,20 @@ def separator(root,owner,index):
     return root
 
 def recurrence_code(topic):
-    explicit=topic.get('status_record',{}).get('recurrence')
-    if explicit: return explicit
-    extra={re.sub(r'\s+',' ',str(v).strip().casefold()) for v in topic.get('extra',{}).values()}
-    if extra & {'возобновилось','возобновилась','возобновлено','возобновилось обсуждение темы'}: return 'resumed'
-    return 'long' if topic.get('duration')==4 else ('two' if topic.get('duration')==2 else None)
+    duration=topic.get('duration')
+    if isinstance(duration,str) and re.fullmatch(r'\d+',duration.strip()): duration=int(duration.strip())
+    if not valid_signal(duration) or duration < 1: return None
+    comment=topic.get('comment')
+    if comment is None:
+        comment=next((v for k,v in topic.get('extra',{}).items() if str(k).strip().casefold() in ('комментарий','комментарии')),None)
+    text=re.sub(r'\s+',' ',str(comment or '').strip().casefold())
+    if duration==1:
+        if 'comment' in topic.get('uncached_formulas', []): return None
+        if not text: return 'new'
+        if text in {'возобновилось','возобновилась','возобновлено','возобновилось обсуждение темы'}: return 'resumed'
+        return None
+    if duration==2: return 'two'
+    return 'long'
 
 def promises_separator(root,index):
     for shape in root.findall('.//p:sp',N):
@@ -363,6 +370,8 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         if child.tag==f'{{{P}}}sp':
             text=content(child)
             if 'Темы, требующие внимания' in text: replace_text(child,f"{'UX-проблемы' if ux else 'Темы, требующие внимания'} ({page_no}/{page_total})")
+            elif re.fullmatch(r'Повторяется\s*>\s*3\s*мес\.?',text.strip(),flags=re.IGNORECASE):
+                replace_text(child,'Повторяется 3+ мес.')
             elif text.strip()=='SberUser':
                 replace_text(child,owner)
                 for rp in child.findall('.//a:rPr',N): rp.set('sz','650' if len(owner)>8 else '800')
@@ -376,9 +385,7 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
     for row in rows[1:]: table.remove(row)
     weights=[overview_row_height(item) for item in items]
     frame_transform=frame.find('p:xfrm',N)
-    available=int(frame_transform.find('a:ext',N).get('cy'))-int(rows[0].get('h'))
-    heights=[int(available*w/sum(weights)) for w in weights]
-    heights[-1]+=available-sum(heights)
+    heights=weights
     frame.find('p:xfrm/a:ext',N).set('cy',str(int(rows[0].get('h'))+sum(heights)))
     for background in tree.findall('p:sp',N):
         x,y=position(background)
@@ -387,6 +394,9 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         if not content(background) and x is not None and abs(x-round(.37*914400))<100000 and abs(y-round(.89*914400))<100000 and ext is not None and int(ext.get('cy'))>3*914400:
             off=trans.find('a:off',N);foff=frame_transform.find('a:off',N);fext=frame_transform.find('a:ext',N)
             off.set('x',foff.get('x'));off.set('y',foff.get('y'));ext.set('cx',fext.get('cx'));ext.set('cy',fext.get('cy'))
+        elif not content(background) and x is not None and abs(x-round(.37*914400))<100000 and abs(y-round(.89*914400))<100000 and ext is not None and int(ext.get('cy'))<914400:
+            off=trans.find('a:off',N);foff=frame_transform.find('a:off',N);fext=frame_transform.find('a:ext',N)
+            off.set('x',foff.get('x'));ext.set('cx',fext.get('cx'))
     spans={};start=0
     while start<len(items):
         end=start+1;key=items[start].get('_product_key',product_key(items[start]['product']))
@@ -411,11 +421,20 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         if row_number in spans and spans[row_number]>1: cells[0].set('rowSpan',str(spans[row_number]))
         elif row_number not in spans:
             cells[0].set('vMerge','1');replace_text(cells[0],'')
+        if row_number<len(items)-1 and any(row_number==start+length-1 for start,length in spans.items()):
+            product_props=cells[0].find('a:tcPr',N); topic_props=cells[1].find('a:tcPr',N)
+            source_line=topic_props.find('a:lnB',N) if topic_props is not None else None
+            if product_props is not None and source_line is not None:
+                for old_line in product_props.findall('a:lnB',N): product_props.remove(old_line)
+                before=next((i for i,child in enumerate(product_props) if child.tag not in (f'{{{A}}}lnL',f'{{{A}}}lnR',f'{{{A}}}lnT')),len(product_props))
+                product_props.insert(before,copy.deepcopy(source_line))
         for rp in cells[-1].findall('.//a:rPr',N): rp.set('sz','750')
         if not ux:
             zone=cells[2].find('a:tcPr',N)
             for fill in zone.findall('a:solidFill',N): zone.remove(fill)
             fill=ET.SubElement(zone,f'{{{A}}}solidFill');ET.SubElement(fill,f'{{{A}}}srgbClr',{'val':{'высокое внимание':'FFD9DD','потенциальный риск':'FFE9BF','наблюдение':'DBECFF'}.get(t['zone'],'EEEEEE')})
+        if row_number==len(items)-1:
+            for cell in cells: remove_bottom_border(cell)
         table.append(row)
         icon=recurrence_code(t)
         def put_icon(name,x_center,scale=1):
@@ -441,6 +460,14 @@ def table_slide(root,owner,items,page_no,page_total,ux=False):
         if mitigation: put_icon(mitigation,control_start+888360+130000)
         if status.get('promnenie'): put_icon('promnenie',485888+1246136-130000)
     return root
+
+def remove_bottom_border(cell):
+    props=cell.find('a:tcPr',N)
+    if props is None: props=ET.SubElement(cell,f'{{{A}}}tcPr')
+    for line in props.findall('a:lnB',N): props.remove(line)
+    line=ET.Element(f'{{{A}}}lnB');ET.SubElement(line,f'{{{A}}}noFill')
+    before=next((i for i,child in enumerate(props) if child.tag not in (f'{{{A}}}lnL',f'{{{A}}}lnR',f'{{{A}}}lnT')),len(props))
+    props.insert(before,line)
 
 def detail_slide(root,t,quote,number):
     tree=shapes(root)
@@ -486,6 +513,7 @@ def filtered_rels(data, slide=False):
 
 def make_deck(template, output, state):
     from .detail_widgets import detail_pages, render_detail
+    from .source_inventory import product_source_rows
     with ZipFile(template) as source:
         src={i.filename:source.read(i.filename) for i in source.infolist() if not i.is_dir()}
     for needed in ('ppt/slides/slide1.xml','ppt/slides/slide2.xml','ppt/slides/slide3.xml','ppt/slides/slide4.xml','ppt/slides/slide5.xml','ppt/slides/slide6.xml','ppt/slides/slide12.xml','ppt/slides/slide47.xml'):
@@ -500,7 +528,13 @@ def make_deck(template, output, state):
     legend_rels=xml(src['ppt/slides/_rels/slide6.xml.rels'])
     legend_targets={r.get('Id'):r.get('Target') for r in legend_rels if r.get('Type','').endswith('/image')}
     groups=defaultdict(list)
-    for topic in state['topics']: groups[str(topic.get('owner') or 'Владелец не указан')].append(topic)
+    owner_labels = {}
+    for topic in state['topics']:
+        owner = str(topic.get('owner') or '').strip() or 'Владелец не указан'
+        label = owner_labels.setdefault(product_key(owner), owner)
+        groups[label].append(topic)
+    product_owners=defaultdict(set)
+    for t in state['topics']: product_owners[product_key(t['product'])].add(product_key(t.get('owner')))
     report=state.get('promise_report')
     toc_groups=dict(groups)
     if report: toc_groups[PROMISES_SECTION]=[{'product':'Статистика и переносы'}]
@@ -521,14 +555,16 @@ def make_deck(template, output, state):
             for idx,part in enumerate(pages,1):
                 plans.append((6,lambda r,owner=owner,part=part,idx=idx,total=len(pages),is_ux=is_ux:table_slide(r,owner,part,idx,total,is_ux)))
         products={}
-        for t in items: products.setdefault(product_key(t['product']),[]).append(t)
+        for t in order_topics_by_product(items): products.setdefault(product_key(t['product']),[]).append(t)
         for product_topics in products.values():
             high=[t for t in product_topics if t.get('zone')=='высокое внимание']
             if not high: continue
-            product_sources=list(dict.fromkeys(str(source).strip() for t in product_topics for source in t.get('sources',[]) if str(source).strip()))
+            refs=product_source_rows(product_topics,state.get('signals',[]),len(product_owners[product_key(product_topics[0]['product'])])==1)
+            product_sources=list(dict.fromkeys(str(r.get('source') or '').strip() for r in refs if str(r.get('source') or '').strip()))
             product_pages=detail_pages(high)
             for i,part in enumerate(product_pages):
-                plans.append((12,lambda r,part=part,sources=product_sources,last=(i==len(product_pages)-1),product_topics=product_topics:render_detail(r,part,legend,sources,last,product_topics)))
+                offset=sum(len(page) for page in product_pages[:i])
+                plans.append((12,lambda r,part=part,sources=product_sources,last=(i==len(product_pages)-1),product_topics=product_topics,offset=offset:render_detail(r,part,legend,sources,last,product_topics,offset)))
         spans[owner]=(group_start,len(plans))
     if report:
         for number in (54,55,56):

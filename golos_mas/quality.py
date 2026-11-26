@@ -59,15 +59,26 @@ class QualityAgent:
         for entry in owners_by_product.values():
             if len(entry['owners'])>1:
                 warnings.append(f"{entry['ref']}: одно название продукта встречается у нескольких владельцев; в общем количестве названий продукт учтён один раз")
-        sources_by_product={}
+        from .product_metrics import product_metrics
+        from .source_inventory import product_source_rows
+        from .detail_widgets import source_widget_layout
+        products={}
         for topic in state['topics']:
-            key=(product_key(topic.get('owner')),product_key(topic.get('product')))
-            entry=sources_by_product.setdefault(key,{'sources':set(),'high':False,'ref':f"{topic['sheet']}!{topic['row']}"})
-            entry['sources'].update(str(source).strip() for source in topic.get('sources',[]) if str(source).strip())
-            entry['high'] |= topic.get('zone')=='высокое внимание'
-        for entry in sources_by_product.values():
-            if entry['high'] and (len(entry['sources'])>6 or any(len(name)>50 for name in entry['sources'])):
-                warnings.append(f"{entry['ref']}: много источников продукта или длинные названия; проверьте читаемость виджетов")
+            products.setdefault((product_key(topic.get('owner')),product_key(topic.get('product'))),[]).append(topic)
+        for topics in products.values():
+            product=product_key(topics[0]['product'])
+            refs=product_source_rows(topics,state.get('signals',[]),len(owners_by_product.get(product,{}).get('owners',set()))<=1)
+            if state.get('template') and any(t.get('zone') == 'высокое внимание' for t in topics):
+                sources = list(dict.fromkeys(str(ref['source']).strip() for ref in refs
+                                             if str(ref.get('source') or '').strip()))
+                _, hidden = source_widget_layout(sources)
+                if hidden:
+                    warnings.append(f"{topics[0]['sheet']}!{topics[0]['row']}: {hidden} источников продукта не поместились на слайде. Полный список в product_sources аудита")
+            if any(ref['basis']=='product' for ref in refs):
+                warnings.append(f"{topics[0]['sheet']}!{topics[0]['row']}: источники дополнены по названию продукта; связи отдельных обращений с темами не предполагаются")
+            for field,detail in product_metrics(topics).items():
+                if detail['conflict'] or detail['invalid_references']:
+                    warnings.append(f"{topics[0]['sheet']}!{topics[0]['row']}: {field}: некорректные или противоречивые значения по продукту; показатель не выведен")
         for t in state['topics']:
             if len(str(t.get('topic') or ''))>250:
                 warnings.append(f"{t['sheet']}!{t['row']}: длинная тема может не поместиться на слайде; проверьте визуально")

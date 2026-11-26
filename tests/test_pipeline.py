@@ -277,9 +277,9 @@ def test_explicit_recurrence_is_checked_and_not_inferred_as_new(tmp_path):
     topic={'product':'P','topic':'T','sheet':'P','row':2,'duration':4,'extra':{}}
     path=tmp_path/'s.json';path.write_text(json.dumps([{'product':'P','topic':'T','recurrence':'new'}]),encoding='utf8')
     state=StatusAgent()({'statuses_json':str(path),'topics':[topic],'warnings':[]})
-    assert recurrence_code(state['topics'][0])=='new' and any('противоречит' in w for w in state['warnings'])
-    assert recurrence_code({'duration':1,'extra':{}}) is None
-    assert recurrence_code({'duration':1,'extra':{'примечание':'обсуждение не возобновилось'}}) is None
+    assert recurrence_code(state['topics'][0])=='long' and any('отличается' in w for w in state['warnings'])
+    assert recurrence_code({'duration':1,'extra':{}})=='new'
+    assert recurrence_code({'duration':1,'comment':'обсуждение не возобновилось'}) is None
 
 def test_duration_and_missing_previous_topic_warn_but_do_not_rewrite_icon():
     from golos_mas.agents import AnalyticsAgent

@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import date, datetime
 from openpyxl import load_workbook
 from openpyxl.utils.cell import column_index_from_string
-from .periods import parse_month, previous_month, discover_priority_sheet
+from .periods import parse_month, previous_month, discover_priority_sheet, dated_priority_months, format_period
 
 
 def norm(x):
@@ -58,6 +58,10 @@ COLUMN_ALIASES = {
     'score': ('общий балл', 'общий бал'), 'date': ('дата',), 'source': ('источник',),
     'text': ('маскированный текст из источника',), 'likes': ('лайки',), 'signal': ('сигнал', 'сигналы'),
     'support': ('ответы поддержки',),
+    'comment': ('комментарий', 'комментарии'),
+    'csat': ('csat',), 'csat_delta': ('дельта csat', 'динамика csat', 'изменение csat'),
+    'opinion_score': ('промнение', 'про мнение'),
+    'opinion_delta': ('дельта промнения', 'дельта промнение', 'дельта про мнения', 'динамика промнения'),
 }
 
 
@@ -169,7 +173,7 @@ def sheet_rows(ws, kind, warnings=None, override=None, skipped_refs=None, raw_ws
         warnings.append(f'Лист {ws.title}: пропущено {len(skipped)} строк без продукта или темы (например: {examples})')
 
 
-def annotate_uncached_formulas(path,sheet_name,columns,topics,warnings,keys=('mau','count','signals_score','duration','impact','score'),raw_workbook=None):
+def annotate_uncached_formulas(path,sheet_name,columns,topics,warnings,keys=('mau','count','signals_score','duration','impact','score','csat','csat_delta','opinion_score','opinion_delta','comment'),raw_workbook=None):
     """Distinguish a truly empty field from a formula with no saved result."""
     relevant=[key for key in keys if columns.get(key) is not None]
     pending={t['row']:t for t in topics if any(t.get(key) is None for key in relevant)}
@@ -221,6 +225,30 @@ class ExcelAgent:
         try:
             schema=load_schema_config(state.get('schema_json'),wb.sheetnames)
             current=state.get('current_sheet');previous=state.get('previous_sheet')
+            if not target and (not current or (state.get('infer_period') and not state.get('period'))):
+                dates=set()
+                names=state.get('detail_sheets') or [n for n in wb.sheetnames if norm(n) in {'sh','si','sd','su','sw','прочее'}]
+                for name in names:
+                    if name not in wb.sheetnames: continue
+                    try: header,_,cols=resolve_columns(wb[name],schema.get(name))
+                    except ValueError: continue
+                    index=cols.get('date')
+                    if index is None: continue
+                    for row in wb[name].iter_rows(min_row=header+1,max_col=index+1,values_only=True):
+                        if len(row)>index and (month:=month_of(row[index])): dates.add(month)
+                candidate_sheets = [current] if current else wb.sheetnames
+                candidate_months = dates | set(dated_priority_months(candidate_sheets))
+                for month in sorted(candidate_months, reverse=True):
+                    selected, yearless = discover_priority_sheet(candidate_sheets, month, False)
+                    if not selected:
+                        continue
+                    if yearless and sum(date[5:] == month[5:] for date in dates) > 1:
+                        raise ValueError('В детализации есть этот месяц за несколько лет; укажите --report-month YYYY-MM')
+                    target = month
+                    break
+                if not target:
+                    raise ValueError('Не удалось надёжно определить отчётный месяц по названиям листов и датам; укажите --report-month YYYY-MM')
+                warnings.append(f'Отчётный месяц определён автоматически: {target}; проверьте выбранный период')
             if not current:
                 if not target: raise ValueError('Укажите --current-sheet или --report-month для поиска листа')
                 current,yearless=discover_priority_sheet(wb.sheetnames,target,True)
@@ -286,6 +314,7 @@ class ExcelAgent:
             if len(months)>1: warnings.append('В детализации несколько месяцев: '+', '.join(months)+'; задайте --report-month для фильтрации')
         if not topics: raise ValueError('Лист приоритетов не содержит тем')
         return {'topics':topics,'previous_topics':old,'signals':signals,'warnings':warnings,
+                'report_month':target,'period':state.get('period') or (format_period(target) if target else None),
                 'current_sheet':current,'previous_sheet':previous,'detail_sheets':detail,'date_filter':date_filter,'skipped_rows':skipped_rows}
 
 
@@ -488,6 +517,18 @@ def day_of(value):
     return None
 
 
+def customer_quote(value):
+    """Remove known export metadata; never synthesize or paraphrase a quotation."""
+    text=str(value or '').strip()
+    text=re.split(r'(?is)\[АНАЛИЗ ИЗОБРАЖЕНИЯ', text, maxsplit=1)[0]
+    if re.fullmatch(r'[\s\d:–-]*', text): return ''
+    text=re.sub(r'^\s*(?:\d+\s*[-–]\s*)?\d{1,2}:\d{2}(?::\d{2})?\s*[-–:]\s*(?:\d{7,}\s*[-–:]\s*)*', '', text)
+    text=re.sub(r'^\s*№\s*\d+\s*/\s*\d+\s*[,;:–-]?\s*', '', text)
+    text=re.sub(r'(?i)^\s*пользователь\s*\d+\b\s*[:,-]?\s*', '', text)
+    text=re.sub(r'(?i)\s*\bред\.\s*(?:\d{1,2}:\d{2}(?::\d{2})?)?\s*$', '', text)
+    return re.sub(r'\s+', ' ',text).strip(' \t\r\n-–:;,')
+
+
 class QuoteLimitAgent:
     """Apply the presentation limit after selection and retain omitted row references."""
     def __call__(self,state):
@@ -504,16 +545,30 @@ class QuoteLimitAgent:
                 topic['quotes']=quotes[:limit]
                 warnings.append(f"{topic['sheet']}!{topic['row']}: из {len(quotes)} выбранных обращений на слайдах оставлено {limit} по заданному ограничению")
             chosen = topic.get('quotes', [])
-            displayed = chosen[:2] if topic.get('zone') == 'высокое внимание' else []
+            displayed=[]
+            if topic.get('zone') == 'высокое внимание':
+                seen=set()
+                fallback=topic.get('quote_candidates',[]) if chosen and topic.get('quote_selection')!='gigachat' else []
+                for quote in chosen+fallback:
+                    ref=(quote['sheet'],quote['row'])
+                    if ref in seen: continue
+                    seen.add(ref)
+                    cleaned=customer_quote(quote.get('text'))
+                    if not cleaned: continue
+                    displayed.append((quote,cleaned))
+                    if len(displayed)>=min(2,limit): break
             topic['presentation_quotes'] = []
-            for quote in displayed:
-                value = str(quote.get('text') or '').strip()
+            topic['presentation_quote_originals'] = [dict(quote) for quote,_ in displayed]
+            for quote,value in displayed:
                 if len(value) > 180:
                     value = value[:179].rsplit(' ', 1)[0] or value[:179]
                     value = value.rstrip() + '…'
                 topic['presentation_quotes'].append({**quote, 'text': value})
+            shown={(q['sheet'],q['row']) for q,_ in displayed}
             topic['presentation_omitted_quote_references'] = [
-                {'sheet': q['sheet'], 'row': q['row']} for q in chosen[len(displayed):]]
+                {'sheet': q['sheet'], 'row': q['row']} for q in chosen if (q['sheet'],q['row']) not in shown]
+            if topic.get('zone')=='высокое внимание' and not displayed:
+                warnings.append(f"{topic['sheet']}!{topic['row']}: не найдено надёжно сопоставленное обращение клиента для слайда")
             if topic['presentation_omitted_quote_references'] and topic.get('zone') == 'высокое внимание':
                 warnings.append(f"{topic['sheet']}!{topic['row']}: на слайде показаны не все выбранные обращения; полные цитаты доступны в аудите")
             topics.append(topic)

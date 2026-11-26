@@ -70,7 +70,7 @@ def test_multi_page_contents_matches_generated_sections(tmp_path):
             root=ET.fromstring(deck.read(f'ppt/slides/slide{i}.xml'))
             slides.append(' '.join(el.text or '' for el in root.findall('.//a:t',ns)))
         contents=[s for s in slides if 'Продуктов с темами высокого внимания' in s]
-        assert len(contents)>=2
+        assert len(contents)==1
         for product in expected: assert any(product in page for page in contents)
         for i in range(8):
             start=next(pos for pos,text in enumerate(slides,1) if f'Продукты и сервисы Группа {i}' in text)
@@ -323,7 +323,7 @@ def test_explicit_new_topic_uses_original_legend_icon(tmp_path):
     import json
     import xml.etree.ElementTree as ET
     ns={'a':'http://schemas.openxmlformats.org/drawingml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
-    w=Workbook();ws=w.active;ws.title='P';ws.append(['владелец','продукт','тема','общий балл']);ws.append(['Команда','Продукт','Тема',9])
+    w=Workbook();ws=w.active;ws.title='P';ws.append(['владелец','продукт','тема','общий балл','длительность']);ws.append(['Команда','Продукт','Тема',9,1])
     book=tmp_path/'i.xlsx';w.save(book)
     status=tmp_path/'s.json';status.write_text(json.dumps([{'product':'Продукт','topic':'Тема','recurrence':'new'}]),encoding='utf8')
     out=tmp_path/'o.pptx';state=create_graph().invoke({'workbook':str(book),'statuses_json':str(status),'template':os.environ['GOLOS_TEST_TEMPLATE'],'current_sheet':'P','period':'октябрь','output':str(out)})
@@ -378,7 +378,7 @@ def test_detail_uses_original_icons_and_accessible_descriptions(tmp_path):
     import json
     import xml.etree.ElementTree as ET
     ns={'p':'http://schemas.openxmlformats.org/presentationml/2006/main','a':'http://schemas.openxmlformats.org/drawingml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
-    w=Workbook();s=w.active;s.title='P';s.append(['владелец','продукт','тема','общий балл']);s.append(['Команда','Продукт','Тема',9])
+    w=Workbook();s=w.active;s.title='P';s.append(['владелец','продукт','тема','общий балл','длительность']);s.append(['Команда','Продукт','Тема',9,1])
     d=w.create_sheet('SW');d.append(['источник','продукт','тема','Маскированный текст из источника','сигнал']);d.append(['Чат','Продукт','Тема','Комментарий',1])
     book=tmp_path/'i.xlsx';w.save(book);status=tmp_path/'s.json'
     status.write_text(json.dumps([{'product':'Продукт','topic':'Тема','recurrence':'new','controls':['aibolit','backlog'],'mitigation':'release','version':'7.0','deadline':'4Q 2026','promnenie':True,'after_close':True}]),encoding='utf8')

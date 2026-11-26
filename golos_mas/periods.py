@@ -21,6 +21,16 @@ def previous_month(value):
     year,month=parse_month(value)
     return f'{year-1:04d}-12' if month==1 else f'{year:04d}-{month-1:02d}'
 
+def dated_priority_months(sheet_names):
+    """Explicitly year-qualified priority tabs, without assuming a year."""
+    result=[]
+    for name in sheet_names:
+        match=re.fullmatch(r'приоритет(?:ы)?[\s_-]+([а-я]+)[\s_-]+(\d{4})',name.strip().casefold().replace('ё','е'))
+        if match:
+            for i,forms in enumerate(MONTH_FORMS,1):
+                if match.group(1) in forms: result.append(f'{int(match.group(2)):04d}-{i:02d}')
+    return result
+
 
 def discover_priority_sheet(sheet_names,month,required):
     year,number=parse_month(month);forms=MONTH_FORMS[number-1]

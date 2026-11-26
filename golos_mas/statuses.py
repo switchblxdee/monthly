@@ -39,8 +39,10 @@ class StatusAgent:
             if key in bykey and counts[key]==1:
                 n,status=bykey[key];t['status_record']=dict(status);t['status_source']={'file':str(path),'record':n};used.add(key)
                 recurrence=status.get('recurrence');duration=t.get('duration')
-                if (recurrence=='new' and duration in (2,3,4)) or (recurrence=='two' and duration in (1,3,4)) or (recurrence=='long' and duration in (1,2,3)):
-                    warnings.append(f"{t['sheet']}!{t['row']}: явная повторяемость противоречит длительности; применена явная отметка")
+                if recurrence:
+                    from .template_render import recurrence_code
+                    if recurrence != recurrence_code(t):
+                        warnings.append(f"{t['sheet']}!{t['row']}: повторяемость в файле статусов отличается от Excel; значок определён по длительности и комментарию Excel")
             elif key in bykey:
                 warnings.append(f"{t['sheet']}!{t['row']}: статус не применён, тема неоднозначна в приоритетах")
             topics.append(t)

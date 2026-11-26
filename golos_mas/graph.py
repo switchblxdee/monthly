@@ -33,6 +33,7 @@ class ReportState(TypedDict, total=False):
     previous_sheet: str | None
     detail_sheets: list[str] | None
     report_month: str | None
+    infer_period: bool
     max_quotes_per_topic: int
     date_filter: dict[str, Any] | None
     skipped_rows: list[dict[str, Any]]

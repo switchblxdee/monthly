@@ -7,6 +7,7 @@ import textwrap
 from .agents import display_signal_count
 from .detail_widgets import detail_pages
 from .template_render import product_key
+from .source_inventory import product_source_rows
 
 NS='xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"'
 
@@ -48,6 +49,8 @@ def build_pages(state):
     for part in chunks(wrap_paragraphs(summary),20): pages.append(page('Summary',part,'Показатели рассчитаны по предоставленному листу'))
     groups=defaultdict(list)
     for t in topics: groups[str(t.get('owner') or 'Владелец не указан')].append(t)
+    product_owners=defaultdict(set)
+    for t in topics: product_owners[product_key(t['product'])].add(product_key(t.get('owner')))
     for owner,items in groups.items():
         pages.append(page(owner,['Темы, требующие внимания']))
         lines=[]
@@ -59,7 +62,8 @@ def build_pages(state):
         for t in items: products.setdefault(product_key(t['product']),[]).append(t)
         for product_topics in products.values():
             detail=detail_pages([t for t in product_topics if t['zone']=='высокое внимание'])
-            sources=list(dict.fromkeys(str(s) for t in product_topics for s in t.get('sources',[]) if s))
+            refs=product_source_rows(product_topics,state.get('signals',[]),len(product_owners[product_key(product_topics[0]['product'])])==1)
+            sources=list(dict.fromkeys(str(r['source']) for r in refs if r.get('source')))
             for idx,part in enumerate(detail):
                 lines=[]
                 for t in part:
