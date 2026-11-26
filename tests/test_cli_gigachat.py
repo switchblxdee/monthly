@@ -18,12 +18,12 @@ def test_cli_configures_model_and_processes_selected_evidence(tmp_path):
     book=tmp_path/'input.xlsx';w.save(book);out=tmp_path/'out.pptx';log=tmp_path/'constructor.json'
     env=dict(os.environ,PYTHONPATH=os.pathsep.join([str(tmp_path),str(Path(golos_mas.__file__).resolve().parent.parent)]),
              GIGACHAT_BASE_URL='https://model.internal/v1',GIGACHAT_AUTH_URL='https://auth.internal/token',
-             GIGACHAT_CREDENTIALS='fake',FAKE_GIGA_LOG=str(log))
+             GIGACHAT_CREDENTIALS='fake',GIGACHAT_MODEL='Internal-GigaChat',FAKE_GIGA_LOG=str(log))
     cmd=[sys.executable,'-m','golos_mas.cli',str(book),'--current-sheet','P','--period','месяц',
          '--template',os.environ['GOLOS_TEST_TEMPLATE'],'--gigachat','--gigachat-quotes','--output',str(out)]
     result=subprocess.run(cmd,env=env,capture_output=True,text=True,timeout=120)
     assert result.returncode==0,result.stderr
-    assert json.loads(log.read_text())=={'base_url':'https://model.internal/v1','auth_url':'https://auth.internal/token'}
+    assert json.loads(log.read_text())=={'base_url':'https://model.internal/v1','auth_url':'https://auth.internal/token','model':'Internal-GigaChat'}
     audit=json.loads(out.with_suffix('.audit.json').read_text(encoding='utf8'))
     assert audit['topics'][0]['quote_selection']=='gigachat' and audit['topics'][0]['quotes'][0]['row']==2
     quote=audit['topics'][0]['quotes'][0]

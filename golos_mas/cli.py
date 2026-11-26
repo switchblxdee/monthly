@@ -43,7 +43,7 @@ def main():
     output_path=Path(args.output).resolve()
     audit_path=output_path.with_suffix('.audit.json')
     inputs=[Path(value).resolve() for value in (args.workbook,args.template,args.statuses_json,args.promises_json,args.topic_map_json,args.schema_json) if value]
-    if any(path in inputs for path in (output_path,audit_path)):
+    if any(path.resolve() in inputs for path in (output_path,audit_path)):
         p.error('Выходная презентация и файл аудита не должны совпадать с исходными файлами')
     llm=None
     if args.gigachat:
@@ -54,8 +54,39 @@ def main():
         except ConnectionConfigurationError as exc: p.error(str(exc))
         if not callable(getattr(llm, 'bind_tools', None)):
             p.error('Для агентного режима GigaChat должен поддерживать bind_tools')
-    result=create_graph(llm, use_model_quotes=args.gigachat_quotes, use_model_matching=args.gigachat_match,max_quote_candidates=args.gigachat_max_candidates).invoke({'workbook':args.workbook,'schema_json':args.schema_json,'mau_boundaries':args.mau_boundaries,'template':args.template,'statuses_json':args.statuses_json,'promises_json':args.promises_json,'topic_map_json':args.topic_map_json,'current_sheet':args.current_sheet,'previous_sheet':args.previous_sheet,'auto_previous':not args.no_previous,'detail_sheets':args.detail_sheets,'period':args.period,'report_month':args.report_month,'infer_period':True,'max_quotes_per_topic':args.max_quotes_per_topic,'output':args.output})
-    report=Path(args.output).with_suffix('.audit.json')
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.golos-report-', dir=output_path.parent) as workdir:
+        staged_deck = Path(workdir) / 'report.pptx'
+        staged_audit = Path(workdir) / 'report.audit.json'
+        result=create_graph(llm, use_model_quotes=args.gigachat_quotes, use_model_matching=args.gigachat_match,max_quote_candidates=args.gigachat_max_candidates).invoke({'workbook':args.workbook,'schema_json':args.schema_json,'mau_boundaries':args.mau_boundaries,'template':args.template,'statuses_json':args.statuses_json,'promises_json':args.promises_json,'topic_map_json':args.topic_map_json,'current_sheet':args.current_sheet,'previous_sheet':args.previous_sheet,'auto_previous':not args.no_previous,'detail_sheets':args.detail_sheets,'period':args.period,'report_month':args.report_month,'infer_period':True,'max_quotes_per_topic':args.max_quotes_per_topic,'output':str(staged_deck)})
+        with open(staged_audit, 'x', encoding='utf8', opener=_private_file) as handle:
+            json.dump(audit_payload(result, args.schema_json), handle, ensure_ascii=False, indent=2, default=str)
+        publish_report(staged_deck, staged_audit, output_path, audit_path)
+    print(f"Готово: {output_path}; слайдов: {result['slide_count']}; предупреждений: {len(result['warnings'])}; аудит: {audit_path}")
+
+
+def _private_file(path, flags):
+    return os.open(path, flags, 0o600)
+
+
+def publish_report(staged_deck, staged_audit, output_path, audit_path):
+    backup = staged_audit.with_name('previous.audit.json')
+    try:
+        os.link(audit_path, backup, follow_symlinks=False)
+    except FileNotFoundError:
+        backup = None
+    os.replace(staged_audit, audit_path)
+    try:
+        os.replace(staged_deck, output_path)
+    except BaseException:
+        if backup is None:
+            audit_path.unlink()
+        else:
+            os.replace(backup, audit_path)
+        raise
+
+
+def audit_payload(result, schema_json):
     audit_topics=[]
     for topic in result['topics']:
         entry={k:v for k,v in topic.items() if k not in ('matches','quote_candidates')}
@@ -75,14 +106,7 @@ def main():
     product_sources=[{'owner':topics[0].get('owner'),'product':topics[0].get('product'),
                       'references':product_source_rows(topics,result.get('signals',[]),len(owners_by_product[product])==1)}
                      for (owner,product),topics in grouped.items()]
-    payload={'presentation_sha256':digest,'warnings':result['warnings'],'agent_decisions':result.get('agent_decisions',[]),'source_inventory':result.get('source_inventory'),'product_metrics':metrics_audit,'product_sources':product_sources,'topics':audit_topics,'slide_count':result['slide_count'],'promise_report':result.get('promise_report'),'coverage':result.get('coverage'),'date_filter':result.get('date_filter'),'skipped_rows':result.get('skipped_rows',[]),'narrative':result.get('narrative',''),'narrative_sources':result.get('narrative_sources',[]),'source_sheets':{'current':result.get('current_sheet'),'previous':result.get('previous_sheet'),'detail':result.get('detail_sheets'),'schema':args.schema_json}}
-    temporary=None
-    try:
-        with tempfile.NamedTemporaryFile(mode='w',encoding='utf8',prefix='.golos-audit-',suffix='.json',dir=report.resolve().parent,delete=False) as handle:
-            temporary=Path(handle.name);json.dump(payload,handle,ensure_ascii=False,indent=2,default=str)
-        os.replace(temporary,report)
-    except BaseException:
-        if temporary is not None: temporary.unlink(missing_ok=True)
-        raise
-    print(f"Готово: {result['output']}; слайдов: {result['slide_count']}; предупреждений: {len(result['warnings'])}; аудит: {report}")
+    return {'presentation_sha256':digest,'warnings':result['warnings'],'agent_decisions':result.get('agent_decisions',[]),'source_inventory':result.get('source_inventory'),'product_metrics':metrics_audit,'product_sources':product_sources,'topics':audit_topics,'slide_count':result['slide_count'],'promise_report':result.get('promise_report'),'coverage':result.get('coverage'),'date_filter':result.get('date_filter'),'skipped_rows':result.get('skipped_rows',[]),'narrative':result.get('narrative',''),'narrative_sources':result.get('narrative_sources',[]),'source_sheets':{'current':result.get('current_sheet'),'previous':result.get('previous_sheet'),'detail':result.get('detail_sheets'),'schema':schema_json}}
+
+
 if __name__=='__main__': main()

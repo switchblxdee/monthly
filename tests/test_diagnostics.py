@@ -7,6 +7,7 @@ def configure(monkeypatch, factory):
     monkeypatch.delenv('GIGACHAT_CA_BUNDLE_FILE',raising=False)
     monkeypatch.delenv('GIGACHAT_CREDENTIALS',raising=False)
     monkeypatch.delenv('GIGACHAT_AUTH_URL',raising=False)
+    monkeypatch.delenv('GIGACHAT_MODEL',raising=False)
     monkeypatch.setattr(diagnostics.importlib.util,'find_spec',lambda _: object())
     monkeypatch.setattr(diagnostics.importlib,'import_module',lambda _: SimpleNamespace(GigaChat=factory))
 
@@ -51,7 +52,7 @@ def test_oauth_address_required_and_passed_to_model(monkeypatch,capsys):
     assert 'GIGACHAT_AUTH_URL' in capsys.readouterr().out
     monkeypatch.setenv('GIGACHAT_AUTH_URL','https://auth.internal/token')
     assert diagnostics.main([])==0
-    assert calls==[{'base_url':'https://internal.example/v1','auth_url':'https://auth.internal/token'}]
+    assert calls==[{'base_url':'https://internal.example/v1','auth_url':'https://auth.internal/token','model':'GigaChat'}]
 
 
 def test_unconfirmed_endpoint_blocks_ping_without_printing_url(monkeypatch,capsys):

@@ -17,11 +17,12 @@ def connection_kwargs():
     result={'base_url':os.environ['GIGACHAT_BASE_URL'].strip()}
     auth_url=os.environ.get('GIGACHAT_AUTH_URL','').strip()
     if auth_url: result['auth_url']=auth_url
+    result['model']=os.environ.get('GIGACHAT_MODEL','').strip() or 'GigaChat'
     return result
 
 
 def configured_model(factory):
-    """Require the wrapper to expose the explicitly configured endpoints."""
+    """Require the wrapper to acknowledge the endpoints and model."""
     kwargs=connection_kwargs()
     model=factory(**kwargs)
     for field,expected in kwargs.items():

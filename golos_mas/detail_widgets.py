@@ -1,27 +1,81 @@
 """Product detail pages: multiple topics, source widgets and template metrics."""
 import copy
-import math
 import xml.etree.ElementTree as ET
 
 
+def topic_title(topic):
+    title = ' '.join(str(topic['topic']).split())
+    if len(title) <= 250:
+        return title
+    segment = title[:249]
+    return (segment.rpartition(' ')[0] or segment) + '…'
+
+
+def topic_quotes(topic):
+    quotes = topic.get('presentation_quotes', topic.get('quotes', [])[:2])
+    texts = [' '.join(str(quote.get('text') or '').split()) for quote in quotes]
+    return [f'«{text}»' for text in texts if text] or ['Комментарий клиента не найден']
+
+
+def paragraph_lines(text, points, width):
+    lines = 1
+    current = 0.0
+    space = .35 * points / 72
+    for word in text.split():
+        word_width = sum(.95 if c in 'МШЩЖЮФЫмшщжюфыMWmw@' else
+                         .72 if c.isupper() else .54 for c in word) * points / 72
+        if current and current + space + word_width > width:
+            lines += 1
+            current = 0.0
+        if current:
+            current += space
+        current += word_width
+        # Long tokens can wrap even without spaces.
+        while current > width:
+            lines += 1
+            current -= width
+    return lines
+
+
 def topic_height(topic):
-    quotes=topic.get('presentation_quotes', topic.get('quotes', [])[:2])
-    chars=len(str(topic.get('topic') or '')[:250])+sum(len(str(q.get('text') or '')) for q in quotes)
-    return min(1800000, 370000 + math.ceil(max(chars, 1)/90)*175000)
+    width = 7.55  # 7.83 inches in the template, with margins and room for font substitution.
+    title_lines = paragraph_lines(topic_title(topic), 12, width)
+    quote_lines = sum(paragraph_lines(text, 11, width) for text in topic_quotes(topic))
+    return 180_000 + title_lines * 200_000 + quote_lines * 185_000
 
 
-def detail_pages(topics):
-    pages=[];page=[];used=0
-    for topic in topics:
-        h=topic_height(topic)
-        if page and used+h>3100000:
-            pages.append(page);page=[];used=0
-        page.append(topic);used+=h
-    if page: pages.append(page)
+def detail_pages(topics, capacity=3_100_000, final_capacity=None):
+    """Use the fewest pages, balancing spare room among equally short plans."""
+    if not topics:
+        return []
+    final_capacity = capacity if final_capacity is None else final_capacity
+    heights = list(map(topic_height, topics))
+    size = len(topics)
+    plans = {size: (0, 0.0, size)}
+    for start in range(size - 1, -1, -1):
+        height = 0
+        for end in range(start + 1, size + 1):
+            height += heights[end - 1]
+            if height > capacity:
+                break
+            budget = final_capacity if end == size else capacity
+            if height > budget or end not in plans:
+                continue
+            count, spare, _ = plans[end]
+            plan = (count + 1, spare + (1 - height/budget)**2, end)
+            if start not in plans or plan < plans[start]:
+                plans[start] = plan
+    pages = []
+    start = 0
+    while start < size:
+        end = plans[start][2]
+        pages.append(topics[start:end])
+        start = end
     return pages
 
 
 SOURCE_HEIGHT = 252000
+SOURCE_PADDING = 115000
 EMU_PER_INCH = 914400
 
 
@@ -31,6 +85,24 @@ def source_top(topics):
     return max(3.30, (1100369 + 523748 + sum(map(topic_height, topics))) / EMU_PER_INCH + .47)
 
 
+def badge_text_width(text, size):
+    wide = 'МШЩЖЮФЫмшщжюфыMWmw@'
+    glyphs = sum(1.0 if c in wide else .74 if c.isupper() else .59 for c in text)
+    return glyphs * size/72
+
+
+def source_badge_text(name, width):
+    available = width - 2 * SOURCE_PADDING / EMU_PER_INCH
+    if badge_text_width(name, 8) <= available:
+        return name
+    remaining = available - badge_text_width('…', 8)
+    for i, char in enumerate(name):
+        remaining -= badge_text_width(char, 8)
+        if remaining < 0:
+            return name[:i].rstrip() + '…'
+    return name
+
+
 def source_widget_layout(sources, top=4.92):
     """Pack single-line, seven-millimetre badges without hiding source names."""
     names = list(sources)
@@ -38,9 +110,9 @@ def source_widget_layout(sources, top=4.92):
     y = top
     height = SOURCE_HEIGHT / EMU_PER_INCH
     layout = []
-    for name in names:
-        glyph_width = sum(1.0 if c in 'МШЩЖЮW@' else .7 if c.isupper() else .56 for c in name)
-        width = min(8.11, max(.85, .42 + glyph_width * 11 / 72))
+    for source in names:
+        name = ' '.join(source.split())
+        width = min(8.11, max(.85, .46 + badge_text_width(name, 11)))
         if x + width > 8.87 + 1e-6:
             x = .76
             y += height + .045
@@ -52,7 +124,8 @@ def source_widget_layout(sources, top=4.92):
 
 
 def detail_source_pages(topics, sources):
-    pages = detail_pages(topics)
+    # Intermediate pages have no footer. Only the final table reserves room for it.
+    pages = detail_pages(topics, capacity=5_000_000, final_capacity=3_300_000)
     pending = list(sources) or ['Источник не указан']
     layout, remaining = source_widget_layout(pending, source_top(pages[-1]))
     result = [(page, []) for page in pages[:-1]] + [(pages[-1], layout)]
@@ -199,25 +272,51 @@ def render_detail(root, topics, legend, sources, last, product_topics, number_of
                 transform = shape.find('p:grpSpPr/a:xfrm/a:off', N)
             if transform is not None:
                 transform.set('y', str(int(transform.get('y')) - footer_shift))
+    def fit_badge(shape, points, padding):
+        body = shape.find('p:txBody/a:bodyPr', N)
+        extent = shape.find('p:spPr/a:xfrm/a:ext', N)
+        if body is None or extent is None:
+            return
+        body.attrib.update(wrap='none', horzOverflow='clip', vertOverflow='clip',
+                           anchor='ctr', lIns=str(padding), rIns=str(padding),
+                           tIns='0', bIns='0')
+        for node in list(body):
+            if node.tag.rsplit('}', 1)[-1] in ('spAutoFit', 'normAutofit', 'noAutofit'):
+                body.remove(node)
+        ET.SubElement(body, f'{{{A}}}normAutofit')
+        width = max(1, int(extent.get('cx')) - 2*padding) / 914400
+        estimate = badge_text_width(content(shape), points)
+        size = int(100 * points * min(1.0, width / estimate)) if estimate else points * 100
+        for props in shape.findall('.//a:rPr', N):
+            props.set('sz', str(size))
+        for paragraph in shape.findall('.//a:pPr', N):
+            paragraph.set('algn', 'ctr')
+            paragraph.set('marL', '0')
+            paragraph.set('marR', '0')
+            paragraph.set('indent', '0')
+            for node in list(paragraph):
+                if node.tag.endswith(('}lnSpc', '}spcBef', '}spcAft')):
+                    paragraph.remove(node)
+
     for badge in tree.findall('p:sp', N):
         x, y = position(badge)
         if x is None or not (8*914400 < x and .60*914400 < y < 914400):
             continue
-        for prop in badge.findall('.//a:rPr', N):
-            prop.set('sz', '1200')
-        body = badge.find('p:txBody/a:bodyPr', N)
-        if body is not None:
-            body.attrib.update(wrap='none', anchor='ctr', lIns='36000', rIns='36000', tIns='0', bIns='0')
-        for paragraph in badge.findall('.//a:pPr', N):
-            paragraph.set('algn', 'ctr')
-            for node in list(paragraph):
-                if node.tag.endswith(('}spcBef', '}spcAft')):
-                    paragraph.remove(node)
-        line = badge.find('p:spPr/a:ln', N)
-        if line is not None:
-            for dash in list(line):
-                if dash.tag.endswith(('}prstDash', '}custDash')):
-                    line.remove(dash)
+        fit_badge(badge, 12, 36000)
+        props = badge.find('p:spPr', N)
+        line = props.find('a:ln', N)
+        if line is None:
+            line = ET.Element(f'{{{A}}}ln')
+            after_fill = next((i for i, node in enumerate(props)
+                               if node.tag.endswith(('}effectLst', '}effectDag', '}scene3d', '}sp3d', '}extLst'))), len(props))
+            props.insert(after_fill, line)
+        for dash in list(line):
+            if dash.tag.endswith(('}prstDash', '}custDash')):
+                line.remove(dash)
+        # An explicit solid pattern overrides the outline inherited from the template.
+        before_joint = next((i for i, node in enumerate(line)
+                             if node.tag.endswith(('}round', '}bevel', '}miter', '}headEnd', '}tailEnd', '}extLst'))), len(line))
+        line.insert(before_joint, ET.Element(f'{{{A}}}prstDash', {'val': 'solid'}))
     if header_flag is not None:
         # Leave the flag above the table so Office does not cover it with the header fill.
         tree.remove(header_flag)
@@ -247,21 +346,15 @@ def render_detail(root, topics, legend, sources, last, product_topics, number_of
 
     if show_sources and source_template is not None:
         for name, x, y, width in source_layout:
-            shape=copy.deepcopy(source_template);unique_id(shape);replace_text(shape,name)
+            shape=copy.deepcopy(source_template);unique_id(shape)
+            replace_text(shape, source_badge_text(name, width))
+            shape.find('.//p:cNvPr', N).set('descr', name)
             tr=shape.find('.//a:xfrm',N);off=tr.find('a:off',N);ext=tr.find('a:ext',N)
             off.set('x',str(round(x*914400)));off.set('y',str(round(y*914400)))
             ext.set('cx',str(round(width*914400)));ext.set('cy',str(SOURCE_HEIGHT))
-            body=shape.find('p:txBody/a:bodyPr',N)
-            if body is not None:
-                body.attrib.update(wrap='none', anchor='ctr', tIns='0', bIns='0', lIns='115000', rIns='115000')
-                for fit in list(body):
-                    if fit.tag in (f'{{{A}}}spAutoFit',f'{{{A}}}normAutofit',f'{{{A}}}noAutofit'): body.remove(fit)
-                ET.SubElement(body,f'{{{A}}}noAutofit')
-            for paragraph in shape.findall('.//a:pPr', N):
-                for node in list(paragraph):
-                    if node.tag.endswith(('}lnSpc','}spcBef','}spcAft')): paragraph.remove(node)
+            fit_badge(shape, 11, SOURCE_PADDING)
             for rp in shape.findall('.//a:rPr',N):
-                rp.set('sz','1100');rp.set('b','0')
+                rp.set('b','0')
                 latin=rp.find('a:latin',N)
                 if latin is None: latin=ET.SubElement(rp,f'{{{A}}}latin')
                 latin.set('typeface','SB Sans Display Light')
@@ -286,8 +379,7 @@ def render_detail(root, topics, legend, sources, last, product_topics, number_of
             for fill in props.findall('a:solidFill',N): props.remove(fill)
             fill=ET.SubElement(props,f'{{{A}}}solidFill');ET.SubElement(fill,f'{{{A}}}srgbClr',{'val':'FFFFFF'})
             if index==len(topics)-1: remove_bottom_border(cell)
-        title=str(topic['topic']);title=title if len(title)<=250 else title[:249].rsplit(' ',1)[0].rstrip()+'…'
-        replace_text(cells[1],title)
+        replace_text(cells[1],topic_title(topic))
         title_properties=cells[1].findall('.//a:rPr',N)
         for rp in title_properties:
             rp.set('sz','1200');rp.set('b','1')
@@ -297,20 +389,14 @@ def render_detail(root, topics, legend, sources, last, product_topics, number_of
         status=topic.get('status_record',{})
         replace_text(cells[4],' '.join(filter(None,[status.get('version',''),status.get('deadline','')])))
         body=cells[1].find('a:txBody',N)
-        for quote in topic.get('presentation_quotes',topic.get('quotes',[])[:2]):
-            if not quote.get('text'): continue
+        for text in topic_quotes(topic):
             para=copy.deepcopy(body.find('a:p',N));holder=ET.Element(f'{{{A}}}tc');tmp=ET.SubElement(holder,f'{{{A}}}txBody');tmp.append(para)
-            replace_text(holder,'«'+quote['text']+'»')
+            replace_text(holder,text)
             for rp in para.findall('.//a:rPr',N):
                 rp.set('b','0');rp.set('sz','1100')
                 latin=rp.find('a:latin',N)
                 if latin is None: latin=ET.SubElement(rp,f'{{{A}}}latin')
                 latin.set('typeface','SB Sans Display Light')
-            body.append(para)
-        if not topic.get('presentation_quotes',topic.get('quotes',[])[:2]):
-            para=copy.deepcopy(body.find('a:p',N));holder=ET.Element(f'{{{A}}}tc');tmp=ET.SubElement(holder,f'{{{A}}}txBody');tmp.append(para)
-            replace_text(holder,'Комментарий клиента не найден')
-            for rp in para.findall('.//a:rPr',N): rp.set('b','0');rp.set('sz','1100')
             body.append(para)
         table.append(row)
         row_y=1100369+int(header.get('h'))+sum(heights[:index])+height/2

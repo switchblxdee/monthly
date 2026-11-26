@@ -146,3 +146,32 @@ def test_worker_cannot_skip_validation_or_loop_forever():
     with pytest.raises(RuntimeError, match='превышен лимит'):
         worker({})
     assert invoked==[]
+
+
+def test_worker_recovers_from_plain_text_without_losing_tool_history():
+    calls = []
+
+    class Model:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            calls.append(messages)
+            if len(calls) == 2:
+                return AIMessage(content='Проверка завершена')
+            name = 'validate' if len(calls) == 1 else 'save'
+            return AIMessage(content='', tool_calls=[{'name': name, 'args': {}, 'id': f'call-{name}'}])
+
+    def save(state):
+        assert state['validated']
+        return {'saved': True}
+
+    worker = ReportWorker(Model(), 'presentation', 'собрать отчёт', [
+        ('validate', 'Проверить отчёт.', lambda state: {'validated': True}),
+        ('save', 'Сохранить отчёт.', save),
+    ])
+    result = worker({})
+    assert result['saved']
+    assert calls[2][1:] == calls[1][1:]
+    assert 'Сейчас вызови инструмент save' in calls[2][0].content
+    assert result['agent_decisions'][0]['invalid_tool_replies'] == 1

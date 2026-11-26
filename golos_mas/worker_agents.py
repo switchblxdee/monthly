@@ -14,7 +14,6 @@ from langgraph.prebuilt import ToolNode
 
 class WorkerState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
-    rounds: int
 
 
 class ReportWorker:
@@ -24,6 +23,7 @@ class ReportWorker:
     enforced in code: a model cannot skip validation or write to arbitrary paths.
     """
     MAX_ROUNDS = 24
+    MAX_INVALID_REPLIES = 3
 
     def __init__(self, model, name: str, purpose: str, operations: list[tuple], optional: list[tuple] | None = None):
         self.model = model
@@ -37,7 +37,7 @@ class ReportWorker:
         done: set[str] = set()
         trace = []
         operations = self.operations
-        counts = {'model_calls': 0}
+        counts = {'model_calls': 0, 'invalid_tool_replies': 0}
 
         def summary():
             return {'completed': sorted(done),
@@ -124,19 +124,31 @@ class ReportWorker:
         bound = self.model.bind_tools(tools)
 
         def think(state):
-            counts['model_calls'] += 1
-            response = bound.invoke(state['messages'])
-            if not isinstance(response, AIMessage):
-                raise ValueError(f'{self.name}: модель вернула неподдерживаемый ответ')
-            if len(response.tool_calls) != 1 or response.tool_calls[0].get('name') not in by_name:
-                raise ValueError(f'{self.name}: ожидается один вызов доступного инструмента')
-            return {'messages': [response], 'rounds': state.get('rounds', 0) + 1}
+            original = state['messages']
+            messages = original
+            for _ in range(self.MAX_INVALID_REPLIES):
+                if counts['model_calls'] >= self.MAX_ROUNDS:
+                    raise RuntimeError(f'{self.name}: превышен лимит действий агента')
+                counts['model_calls'] += 1
+                response = bound.invoke(messages)
+                if not isinstance(response, AIMessage):
+                    raise ValueError(f'{self.name}: модель вернула неподдерживаемый ответ')
+                if not response.invalid_tool_calls and len(response.tool_calls) == 1:
+                    call = response.tool_calls[0]
+                    if call.get('name') in by_name and call.get('id'):
+                        return {'messages': [response]}
+                counts['invalid_tool_replies'] += 1
+                next_required = summary()['remaining'][0]
+                reminder = (f'Предыдущий ответ не содержал одного корректного вызова. '
+                            f'Сейчас вызови инструмент {next_required} с пустыми аргументами.')
+                # Preserve valid tool history without replaying an unmatched function call.
+                system = original[0].model_copy(update={'content': f'{original[0].content}\n{reminder}'})
+                messages = [system, *original[1:]]
+            raise ValueError(f'{self.name}: ожидается один вызов доступного инструмента')
 
         def next_step(state):
             if all(name in done for name, _, _ in operations):
                 return 'finish'
-            if state['rounds'] >= self.MAX_ROUNDS:
-                raise RuntimeError(f'{self.name}: превышен лимит действий агента')
             return 'model'
 
         graph = StateGraph(WorkerState)
@@ -155,14 +167,13 @@ class ReportWorker:
                   'Для вывода используй ссылки на листы и строки. Не придумывай данные и не заявляй о выполнении без вызова инструмента.')
         try:
             graph.compile().invoke({'messages': [SystemMessage(content=prompt),
-                                  HumanMessage(content=json.dumps({'status': summary()}, ensure_ascii=False))],
-                                  'rounds': 0}, {'recursion_limit': 2 * self.MAX_ROUNDS + 2})
+                                  HumanMessage(content=json.dumps({'status': summary()}, ensure_ascii=False))]},
+                                  {'recursion_limit': 2 * self.MAX_ROUNDS + 2})
         except BaseException:
             if data.get('staging_target') and data.get('output') != data.get('staging_target'):
                 Path(data['output']).unlink(missing_ok=True)
             raise
         records = list(data.get('agent_decisions', []))
-        records.append({'agent': self.name, 'action': 'completed', 'tools': trace,
-                        'model_calls': counts['model_calls']})
+        records.append({'agent': self.name, 'action': 'completed', 'tools': trace, **counts})
         data['agent_decisions'] = records
         return data
